@@ -13,18 +13,24 @@ por sí solo.
 ```bash
 .venv/bin/python desktop.py          # desarrollo
 
-# empaquetar — SIEMPRE fuera de OneDrive (ver más abajo), y luego instalar
+# empaquetar — SIEMPRE fuera del proyecto (ver más abajo), y luego instalar
 .venv/bin/pyinstaller CASAMBI.spec --noconfirm --distpath /tmp/casambi-dist --workpath /tmp/casambi-build
 rm -rf /Applications/CASAMBI.app && ditto /tmp/casambi-dist/CASAMBI.app /Applications/CASAMBI.app
 ```
 
 Usa `ditto`, no `cp -R`: es lo correcto para bundles (preserva metadatos y firma).
 
-El proyecto vive dentro de una carpeta sincronizada por OneDrive, y eso ya rompió el
-`.venv` una vez (2026-08-29): OneDrive aplanó los enlaces simbólicos —
-`.venv/bin/python` acabó siendo un fichero de texto de 7 bytes con la palabra
-`python3` dentro— y además quedaron mezclados el `bin/` de macOS con el `Scripts/`,
-`Lib/` y los `.exe` de la etapa Windows.
+### Historia: el proyecto estuvo en OneDrive
+
+Desde el 2026-08-29 el proyecto vive en `~/Developer/CASAMBI`, fuera de cualquier
+carpeta sincronizada. Lo que sigue es historia, pero merece quedarse: explica el
+`--distpath` de más abajo y sirve de diagnóstico si el código vuelve a una carpeta
+sincronizada.
+
+Mientras estuvo bajo OneDrive, el `.venv` se rompió: OneDrive aplanó los enlaces
+simbólicos —`.venv/bin/python` acabó siendo un fichero de texto de 7 bytes con la
+palabra `python3` dentro— y además quedaron mezclados el `bin/` de macOS con el
+`Scripts/`, `Lib/` y los `.exe` de la etapa Windows.
 
 **El síntoma es traicionero: no da error.** Ejecuta `python3` sin argumentos, no
 imprime nada y sale con código 0, así que cualquier comando parece colgarse o
@@ -40,6 +46,19 @@ Para rehacerlo (Apple no admite `--copies`, pero su build copia el binario igual
 rm -rf .venv __pycache__ && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
+Mudar el proyecto de carpeta no daña el binario, pero **deja inservibles los scripts de
+consola** del venv: `pip`, `pyinstaller`, `flask`, `dotenv` y los `activate*` llevan la
+ruta absoluta del intérprete en el shebang y pasan a fallar con
+`bad interpreter: ... no such file or directory`. Ocurrió con la mudanza del 2026-08-29
+y se resolvió reescribiendo la ruta en los ~22 ficheros afectados:
+
+```bash
+grep -rl "<ruta vieja>" .venv/bin | xargs sed -i '' 's|<ruta vieja>|<ruta nueva>|g'
+```
+
+Rehacer el venv también vale. Y como atajo, `.venv/bin/python -m pip` y
+`-m PyInstaller` funcionan aunque el shebang esté roto: no pasan por él.
+
 Solo hay Python 3.9.6 (el de CommandLineTools) en la máquina; es con el que se creó.
 `requirements.txt` no fija versiones, así que un `pip install` limpio trae lo último
 compatible con 3.9 — hoy Flask 3.1.3, pywebview 6.2.1, PyMuPDF 1.26.5, Pillow 11.3.
@@ -48,12 +67,12 @@ existiendo en pywebview 6, pero es un salto de versión mayor: verifícalo si al
 ventana se comporta raro. `urllib3` avisa de `NotOpenSSLWarning` (LibreSSL, propio del
 Python de Apple); es cosmético.
 
-### OneDrive también corrompe el `.app` — no compiles dentro del proyecto
+### La sincronización también corrompía el `.app` — compila siempre fuera del proyecto
 
 El mismo aplanado de symlinks arruina los bundles de PyInstaller, y ahí es **fatal**:
 `Contents/Frameworks/Python3` y `Contents/Resources/Python3` son symlinks al binario
-real dentro de `Python3.framework/`, y OneDrive los convierte en ficheros de texto de
-38 bytes con la ruta dentro. La app entonces no arranca:
+real dentro de `Python3.framework/`, y el cliente de sincronización los convierte en
+ficheros de texto de 38 bytes con la ruta dentro. La app entonces no arranca:
 
 ```
 Failed to load Python shared library '.../Contents/Frameworks/Python3':
@@ -61,12 +80,15 @@ Failed to load Python shared library '.../Contents/Frameworks/Python3':
 ```
 
 Pasó de verdad: el `dist/CASAMBI.app` del 28-08-2026 conservaba 6 symlinks de los 70
-que tiene un bundle sano, y se cerraba nada más abrirla. Se borró (2026-08-29); la
-carpeta hermana `dist/CASAMBI` es de ese mismo build dañado y tampoco sirve.
+que tiene un bundle sano, y se cerraba nada más abrirla. Se borró junto con su hermana
+`dist/CASAMBI` (2026-08-29); ya no existe ninguna de las dos en el proyecto.
 
-**Por eso el `--distpath` fuera de OneDrive del comando de arriba.** Y ojo con cómo se
-verifica un bundle: `find -type l ! -exec test -e {} \;` **no** detecta este daño,
-porque los symlinks aplanados ya no son symlinks sino ficheros normales. La
+**Por eso el `--distpath` fuera del proyecto del comando de arriba.** La regla se
+mantiene aunque la carpeta ya no se sincronice: no cuesta nada y evita reintroducir el
+problema si el código vuelve a la nube.
+
+Y ojo con cómo se verifica un bundle: `find -type l ! -exec test -e {} \;` **no**
+detecta este daño, porque los symlinks aplanados ya no son symlinks sino normales. La
 comprobación buena es contarlos y mirar el framework:
 
 ```bash
@@ -75,7 +97,7 @@ file <bundle>/Contents/Frameworks/Python3            # debe ser Mach-O, no ASCII
 ```
 
 Una vez instalada en `/Applications`, la app es autónoma: no depende del `.venv` ni
-de OneDrive.
+de la carpeta del proyecto.
 
 `main.py` es una CLI independiente y anterior (pregunta credenciales por consola,
 elige red, genera Excel). `run.sh` / `run_web.sh` / `run.bat` / `run_web.bat` son de
@@ -149,4 +171,9 @@ Las imágenes se cachean en `data/images/<image_id>.png` — los IDs son inmutab
   explican *por qué*, no *qué* — mantén ese registro.
 - La paleta del Excel está centralizada arriba de `report.py` (`COLOR_*`); no metas
   colores literales en las funciones de hoja.
-- No es un repositorio git. `reportes/` acumula informes reales de clientes.
+- Repositorio git privado en `git@github.com:chachomorales/Casambi-.git`, rama `main`
+  (ojo al guion final del nombre). `.gitignore` deja fuera `.venv/`, `reportes/`, `.env`
+  y el contenido de `data/`: son informes, planos y anotaciones de instalaciones reales
+  de clientes y no deben salir de la máquina. `data/.gitkeep` existe solo para que
+  `CASAMBI.spec` siga encontrando la carpeta al empaquetar desde un clon limpio.
+- `reportes/` acumula informes reales de clientes.
