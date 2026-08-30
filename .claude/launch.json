@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "casambi-app",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["desktop.py"]
+    }
+  ]
+}

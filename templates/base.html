@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Informes Casambi{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="brand-logo">
+    </div>
+
+    <div class="sidebar-section">Redes Casambi</div>
+    <nav class="sidebar-nav">
+      {% if networks %}
+        {% for net in networks %}
+          <a href="{{ url_for('network_view', network_id=net.id) }}"
+             class="net-link {% if current_id == net.id|string %}active{% endif %}">
+            <span class="net-dot"></span>
+            <span class="net-name">
+              {{ net.name or 'Sin nombre' }}
+              {% if net.site_name %}<small>{{ net.site_name }}</small>{% endif %}
+              {# Con una sola cuenta la etiqueta sobra; con varias hace falta
+                 saber de cuál viene cada red. #}
+              {% if cuentas and cuentas|length > 1 and net.account_label %}
+                <small class="net-account">{{ net.account_label }}</small>
+              {% endif %}
+            </span>
+          </a>
+        {% endfor %}
+      {% elif not error %}
+        <p class="sidebar-empty">No hay redes disponibles.</p>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="{{ url_for('ajustes') }}" class="sidebar-settings">Cuentas y ajustes</a>
+      <img src="{{ url_for('logos', filename='casambi_logo.png') }}" alt="Casambi" class="brand-logo-sm">
+    </div>
+  </aside>
+
+  <main class="content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, msg in messages %}
+        <div class="flash flash-{{ category }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% if error %}
+      <div class="flash flash-error">{{ error }}</div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

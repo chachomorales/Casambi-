@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Informes Casambi — Inicio{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <h1>Informe de Red Casambi</h1>
+  <p>Selecciona una red del menú lateral para ver su informe completo:
+     resumen, dispositivos, luminarias, sensores, pulsadores, grupos y escenas.</p>
+
+  {% if networks %}
+  <div class="net-cards">
+    {% for net in networks %}
+      <a href="{{ url_for('network_view', network_id=net.id) }}" class="net-card">
+        <div class="net-card-name">{{ net.name or 'Sin nombre' }}</div>
+        {% if net.site_name %}<div class="net-card-site">{{ net.site_name }}</div>{% endif %}
+        <div class="net-card-id">ID: {{ net.id }}</div>
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

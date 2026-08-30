@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ titulo }} — Informe Casambi{% endblock %}
+
+{% block content %}
+<div class="cargando">
+  <h1>{{ titulo }}</h1>
+  <p class="cargando-label" id="carga-label">Preparando…</p>
+
+  <div class="barra" id="carga-barra-wrap">
+    <div class="barra-fill" id="carga-barra"></div>
+  </div>
+  <p class="cargando-conteo" id="carga-conteo"></p>
+
+  <div class="flash flash-error" id="carga-error" style="display:none"></div>
+  <p class="hint" id="carga-hint">
+    Los datos se piden a Casambi Cloud; en redes grandes puede tardar unos segundos.
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const estadoUrl = "{{ url_for('carga_estado') }}";
+  const labelEl  = document.getElementById('carga-label');
+  const barraEl  = document.getElementById('carga-barra');
+  const wrapEl   = document.getElementById('carga-barra-wrap');
+  const conteoEl = document.getElementById('carga-conteo');
+  const errorEl  = document.getElementById('carga-error');
+  const hintEl   = document.getElementById('carga-hint');
+
+  async function tick() {
+    let s;
+    try {
+      s = await (await fetch(estadoUrl)).json();
+    } catch (e) {
+      setTimeout(tick, 600);
+      return;
+    }
+
+    if (s.error) {
+      errorEl.textContent = s.error;
+      errorEl.style.display = '';
+      wrapEl.style.display = 'none';
+      conteoEl.textContent = '';
+      hintEl.innerHTML = '<a href="{{ url_for("ajustes") }}">Revisar las cuentas en Ajustes</a>';
+      return;
+    }
+
+    labelEl.textContent = s.label || 'Cargando…';
+
+    if (s.total > 0) {
+      // Progreso conocido: barra proporcional.
+      wrapEl.classList.remove('barra-indet');
+      barraEl.style.width = Math.min(100, Math.round(s.done / s.total * 100)) + '%';
+      conteoEl.textContent = s.done + ' de ' + s.total;
+    } else {
+      // Sin total conocido todavía: barra en movimiento continuo.
+      wrapEl.classList.add('barra-indet');
+      barraEl.style.width = '100%';
+      conteoEl.textContent = '';
+    }
+
+    if (!s.active) {
+      barraEl.style.width = '100%';
+      wrapEl.classList.remove('barra-indet');
+      window.location.href = {{ destino | tojson }};
+      return;
+    }
+    setTimeout(tick, 350);
+  }
+
+  tick();
+</script>
+{% endblock %}

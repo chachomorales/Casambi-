@@ -1,0 +1,914 @@
+{% extends "base.html" %}
+{% block title %}{{ network.name }} — Informe Casambi{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>{{ network.name or 'Red sin nombre' }}</h1>
+    <div class="page-meta">
+      {% if network.site_name %}<span>Site: <b>{{ network.site_name }}</b></span>{% endif %}
+      <span>Tipo: <b>{{ network.type or '-' }}</b></span>
+      {% if network.grade %}<span>Grado: <b>{{ network.grade }}</b></span>{% endif %}
+      <span>Datos: <b>{{ fetched_at.strftime('%d/%m/%Y %H:%M') }}</b></span>
+    </div>
+  </div>
+  <div class="page-actions">
+    <a href="{{ url_for('network_refresh', network_id=network_id) }}" class="btn btn-outline">↻ Actualizar</a>
+    <a href="{{ url_for('network_excel', network_id=network_id) }}" class="btn btn-primary">⬇ Descargar Excel</a>
+  </div>
+</header>
+
+<!-- Estado de conexión: avisa antes de tocar nada si la red está en vivo -->
+<section class="conexion conexion-{{ conexion.nivel }}">
+  <span class="conexion-luz"></span>
+  <div class="conexion-texto">
+    {% if conexion.nivel == 'online' %}
+      <b>Red en línea</b>
+      {%- if conexion.gateway %} — gateway «{{ conexion.gateway }}» conectado{% endif %}.
+      {{ conexion.online }} de {{ conexion.total }} dispositivos responden.
+      <span class="conexion-aviso">
+        Cuidado: capturar niveles activa escenas de verdad y cambiará las luces.
+      </span>
+    {% elif conexion.nivel == 'gateway-offline' %}
+      <b>Fuera de línea</b> — la red tiene configurado el gateway
+      «{{ conexion.gateway }}», pero ahora mismo no responde ningún dispositivo
+      ({{ conexion.total }} en total).
+      <span class="conexion-aviso">
+        Puedes consultar y documentar sin riesgo; los controles no llegarán a las luces.
+      </span>
+    {% else %}
+      <b>Sin gateway</b> — esta red no tiene ningún gateway configurado, así que
+      no se puede controlar desde la nube.
+      <span class="conexion-aviso">
+        Solo consulta y documentación.
+      </span>
+    {% endif %}
+  </div>
+</section>
+
+<!-- Tarjetas de resumen -->
+<section class="cards">
+  <div class="card card-total"><div class="card-num">{{ summary.total }}</div><div class="card-label">Total</div></div>
+  <div class="card card-lumi"><div class="card-num">{{ summary.luminarias }}</div><div class="card-label">Luminarias</div></div>
+  <div class="card card-sensor"><div class="card-num">{{ summary.sensores }}</div><div class="card-label">Sensores</div></div>
+  <div class="card card-button"><div class="card-num">{{ summary.pulsadores }}</div><div class="card-label">Pulsadores</div></div>
+  <div class="card card-gateway"><div class="card-num">{{ summary.gateways }}</div><div class="card-label">Gateways</div></div>
+  <div class="card card-group"><div class="card-num">{{ summary.grupos }}</div><div class="card-label">Grupos</div></div>
+  <div class="card card-scene"><div class="card-num">{{ summary.escenas }}</div><div class="card-label">Escenas</div></div>
+</section>
+
+<!-- Pestañas -->
+<nav class="tabs">
+  <button class="tab active" data-tab="elementos">Elementos <span class="badge">{{ elementos|length }}</span></button>
+  <button class="tab" data-tab="luminarias">Luminarias <span class="badge">{{ luminarias|length }}</span></button>
+  <button class="tab" data-tab="pulsadores">Pulsadores <span class="badge">{{ pulsadores|length }}</span></button>
+  <button class="tab" data-tab="sensores">Sensores <span class="badge">{{ sensores|length }}</span></button>
+  <button class="tab" data-tab="grupos">Grupos <span class="badge">{{ grupos|length }}</span></button>
+  <button class="tab" data-tab="escenas">Escenas <span class="badge">{{ escenas|length }}</span></button>
+  <button class="tab" data-tab="horarios">Horarios <span class="badge">{{ horarios|length }}</span></button>
+  <button class="tab" data-tab="planos">Planos <span class="badge">{{ planos|length }}</span></button>
+</nav>
+
+<!-- Elementos -->
+<section class="tab-panel active" id="panel-elementos">
+  <input type="search" class="table-search" placeholder="Buscar en elementos…" data-target="tbl-elementos">
+  <div class="table-wrap">
+    <table id="tbl-elementos">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Categoría</th><th>Fabricante</th>
+        <th>Modelo</th><th>Dirección MAC</th><th>Grupo</th><th>Soporta</th>
+      </tr></thead>
+      <tbody>
+        {% for e in elementos %}
+        <tr id="elem-{{ e.id }}">
+          <td>{{ e.id }}</td><td>{{ e.name }}</td>
+          <td><span class="pill pill-{{ e.category|lower|replace(' ', '')|replace('/', '') }}">{{ e.category }}</span></td>
+          <td>{{ e.vendor }}</td><td>{{ e.model }}</td>
+          <td class="mono">{{ e.address }}</td><td>{{ e.group }}</td><td>{{ e.controls }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No hay elementos en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Luminarias -->
+<section class="tab-panel" id="panel-luminarias">
+  <input type="search" class="table-search" placeholder="Buscar en luminarias…" data-target="tbl-luminarias">
+  <div class="table-wrap">
+    <table id="tbl-luminarias">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Fabricante</th><th>Modelo</th>
+        <th>Dirección MAC</th><th>Firmware</th><th>Grupo</th><th>Soporta</th>
+      </tr></thead>
+      <tbody>
+        {% for e in luminarias %}
+        <tr>
+          <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.vendor }}</td><td>{{ e.model }}</td>
+          <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td><td>{{ e.group }}</td><td>{{ e.controls }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No se encontraron luminarias en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Pulsadores -->
+<section class="tab-panel" id="panel-pulsadores">
+  <input type="search" class="table-search" placeholder="Buscar en pulsadores…" data-target="tbl-pulsadores">
+  <div class="table-wrap">
+    <table id="tbl-pulsadores">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Tipo (API)</th><th>Fabricante</th>
+        <th>Modelo</th><th>Dirección MAC</th>
+        <th>Nº Botones</th><th>Botones</th>
+      </tr></thead>
+      <tbody>
+        {% for e in pulsadores %}
+        <tr>
+          <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.type }}</td>
+          <td>{{ e.vendor }}</td><td>{{ e.model }}</td>
+          <td class="mono">{{ e.address }}</td>
+          <td class="level-cell">
+            <input type="number" min="0" max="20" step="1"
+                   class="btncount-input" value="{{ e.btn_count or '' }}"
+                   data-unit="{{ e.id }}" placeholder="–"
+                   title="Número de botones físicos del pulsador">
+          </td>
+          <td class="devices">
+            {% if e.buttons %}
+            <table class="subtable">
+              <thead><tr><th>Botón</th><th>Usa</th><th>Programado</th></tr></thead>
+              <tbody>
+                {% for b in e.buttons %}
+                <tr>
+                  <td>Botón {{ b.n }}</td>
+                  <td>
+                    <select class="btn-usa" data-unit="{{ e.id }}" data-button="{{ b.n }}">
+                      <option value="">—</option>
+                      {% for opt in ['Luminaria', 'Elemento', 'Grupo', 'Escena'] %}
+                      <option value="{{ opt }}" {% if b.usa == opt %}selected{% endif %}>{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td>
+                    <select class="btn-prog" data-unit="{{ e.id }}" data-button="{{ b.n }}">
+                      <option value="">—</option>
+                      {% for item in catalogo_botones.get(b.usa, []) %}
+                      <option value="{{ item }}" {% if b.programado == item %}selected{% endif %}>{{ item }}</option>
+                      {% endfor %}
+                      {% if b.programado and b.programado not in catalogo_botones.get(b.usa, []) %}
+                      <option value="{{ b.programado }}" selected>{{ b.programado }}</option>
+                      {% endif %}
+                    </select>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}
+            <span class="hint">Indica el nº de botones para anotarlos</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No se encontraron pulsadores en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Sensores -->
+<section class="tab-panel" id="panel-sensores">
+  <input type="search" class="table-search" placeholder="Buscar en sensores…" data-target="tbl-sensores">
+  <div class="table-wrap">
+    <table id="tbl-sensores">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Tipo (API)</th><th>Fabricante</th>
+        <th>Modelo</th><th>Dirección MAC</th><th>Firmware</th><th>Soporta</th>
+        <th>Modo</th><th>Escena (Presencia)</th><th>Escena (Ausencia)</th>
+      </tr></thead>
+      <tbody>
+        {% for e in sensores %}
+        <tr>
+          <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.type }}</td>
+          <td>{{ e.vendor }}</td><td>{{ e.model }}</td>
+          <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td>
+          <td>{{ e.controls }}</td>
+          <td>
+            <select class="sensor-modo" data-unit="{{ e.id }}">
+              <option value="">—</option>
+              {% for opt in ['Presencia', 'Ausencia', 'Presencia + Ausencia'] %}
+              <option value="{{ opt }}" {% if e.modo == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <select class="sensor-esc sensor-esc-p" data-unit="{{ e.id }}"
+                    {% if e.modo not in ['Presencia', 'Presencia + Ausencia'] %}disabled{% endif %}>
+              <option value="">—</option>
+              {% for item in catalogo_botones.get('Escena', []) %}
+              <option value="{{ item }}" {% if e.escena_presencia == item %}selected{% endif %}>{{ item }}</option>
+              {% endfor %}
+              {% if e.escena_presencia and e.escena_presencia not in catalogo_botones.get('Escena', []) %}
+              <option value="{{ e.escena_presencia }}" selected>{{ e.escena_presencia }}</option>
+              {% endif %}
+            </select>
+          </td>
+          <td>
+            <select class="sensor-esc sensor-esc-a" data-unit="{{ e.id }}"
+                    {% if e.modo not in ['Ausencia', 'Presencia + Ausencia'] %}disabled{% endif %}>
+              <option value="">—</option>
+              {% for item in catalogo_botones.get('Escena', []) %}
+              <option value="{{ item }}" {% if e.escena_ausencia == item %}selected{% endif %}>{{ item }}</option>
+              {% endfor %}
+              {% if e.escena_ausencia and e.escena_ausencia not in catalogo_botones.get('Escena', []) %}
+              <option value="{{ e.escena_ausencia }}" selected>{{ e.escena_ausencia }}</option>
+              {% endif %}
+            </select>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" class="empty">No se encontraron sensores en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Grupos -->
+<section class="tab-panel" id="panel-grupos">
+  <input type="search" class="table-search" placeholder="Buscar en grupos…" data-target="tbl-grupos">
+  <div class="table-wrap">
+    <table id="tbl-grupos">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Nº Dispositivos</th><th>Dispositivos</th>
+      </tr></thead>
+      <tbody>
+        {% for g in grupos %}
+        <tr>
+          <td>{{ g.id }}</td><td>{{ g.name }}</td><td>{{ g.count }}</td>
+          <td class="devices">
+            {% if g.devices %}
+            <table class="subtable">
+              <thead><tr><th>ID</th><th>Dispositivo</th></tr></thead>
+              <tbody>
+                {% for d in g.devices %}
+                <tr>
+                  <td>{{ d.id }}</td>
+                  <td>
+                    <a href="#" class="device-link" data-unit="{{ d.id }}"
+                       title="Ver en Elementos">{{ d.name }}</a>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}-{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">No hay grupos en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Escenas -->
+<section class="tab-panel" id="panel-escenas">
+  <input type="search" class="table-search" placeholder="Buscar en escenas…" data-target="tbl-escenas">
+  <div class="table-wrap">
+    <table id="tbl-escenas">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Tipo</th><th>Nº Dispositivos</th><th>Dispositivos incluidos</th>
+      </tr></thead>
+      <tbody>
+        {% for s in escenas %}
+        <tr>
+          <td>{{ s.id }}</td>
+          <td>
+            {{ s.name }}
+            {% if s.devices %}
+            <button class="btn-capture" data-scene="{{ s.id }}"
+                    data-url="{{ url_for('scene_capture', network_id=network_id, scene_id=s.id) }}"
+                    title="Activa la escena en la red real y captura el nivel que reportan las luminarias. Requiere un gateway online.">
+              ⚡ Capturar niveles
+            </button>
+            {% endif %}
+          </td>
+          <td>{{ s.type }}</td><td>{{ s.count }}</td>
+          <td class="devices">
+            {% if s.devices %}
+            <table class="subtable">
+              <thead><tr><th>Dispositivo</th><th>Intensidad</th></tr></thead>
+              <tbody>
+                {% for d in s.devices %}
+                <tr>
+                  <td>
+                    <a href="#" class="device-link" data-unit="{{ d.id }}"
+                       title="Ver en Elementos">{{ d.name }}</a>
+                  </td>
+                  <td class="level-cell">
+                    <input type="number" min="0" max="100" step="1"
+                           class="level-input" value="{{ d.level }}"
+                           data-scene="{{ s.id }}" data-unit="{{ d.id }}"
+                           placeholder="–"> %
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}-{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">No hay escenas en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<!-- Horarios -->
+<section class="tab-panel" id="panel-horarios">
+  <div class="horarios-toolbar">
+    <button id="btn-add-horario" class="btn btn-outline">＋ Agregar horario</button>
+    <span class="hint">El API de Casambi no expone los horarios; documenta aquí los que configuraste en la app.</span>
+  </div>
+  <div class="table-wrap">
+    <table id="tbl-horarios">
+      <thead><tr>
+        <th>Nombre</th><th>Días</th><th>Encendido</th><th>Apagado</th>
+        <th>Escena</th><th>Habilitado</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for h in horarios %}
+        <tr data-sched="{{ h.id }}">
+          <td><input type="text" class="sched-field" data-field="nombre"
+                     value="{{ h.nombre }}" placeholder="ej. Fachada nocturna"></td>
+          <td><input type="text" class="sched-field sched-short" data-field="dias"
+                     value="{{ h.dias }}" placeholder="ej. L-V / Todos"></td>
+          <td><input type="text" class="sched-field sched-short" data-field="encendido"
+                     value="{{ h.encendido }}" placeholder="18:30 / Atardecer"></td>
+          <td><input type="text" class="sched-field sched-short" data-field="apagado"
+                     value="{{ h.apagado }}" placeholder="23:00 / Amanecer"></td>
+          <td>
+            <select class="sched-field" data-field="escena">
+              <option value="">—</option>
+              {% for item in catalogo_botones.get('Escena', []) %}
+              <option value="{{ item }}" {% if h.escena == item %}selected{% endif %}>{{ item }}</option>
+              {% endfor %}
+              {% if h.escena and h.escena not in catalogo_botones.get('Escena', []) %}
+              <option value="{{ h.escena }}" selected>{{ h.escena }}</option>
+              {% endif %}
+            </select>
+          </td>
+          <td class="sched-check">
+            <input type="checkbox" class="sched-field" data-field="habilitado"
+                   {% if h.habilitado %}checked{% endif %}>
+          </td>
+          <td><button class="sched-del" title="Eliminar horario">✕</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No hay horarios documentados. Usa "＋ Agregar horario".</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Planos -->
+<section class="tab-panel" id="panel-planos">
+  <div class="planos-toolbar">
+    <form action="{{ url_for('plano_upload', network_id=network_id) }}" method="post"
+          enctype="multipart/form-data" class="plano-upload-form">
+      <input type="text" name="name" class="plano-name-input"
+             placeholder="Nombre del plano (ej. Piso 1)">
+      <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png" required>
+      <label class="plano-page-label" title="Página a usar (solo para PDF)">
+        Página <input type="number" name="page" min="1" value="1" class="plano-page-input">
+      </label>
+      <button type="submit" class="btn btn-outline">⬆ Subir plano</button>
+    </form>
+    <span class="hint">
+      Sube un plano en PDF, JPG o PNG; luego elige un elemento y haz clic sobre el plano
+      para colocarlo (arrástralo para moverlo). Los planos salen en la hoja "Planos" del
+      Excel junto con la galería de Casambi.
+    </span>
+  </div>
+
+  {% for p in planos %}
+  <div class="plano-block" data-plano="{{ p.id }}">
+    <div class="plano-head">
+      <input type="text" class="plano-rename" value="{{ p.name }}"
+             title="Nombre del plano (se guarda al salir del campo)">
+      <select class="plano-element-select">
+        <option value="">— Elige un elemento y haz clic en el plano —</option>
+        {% for e in elementos %}
+        <option value="{{ e.id }}">{{ e.id }} — {{ e.name }} ({{ e.category }})</option>
+        {% endfor %}
+      </select>
+      <button class="plano-marker-del" disabled>✕ Quitar del plano</button>
+      <span class="plano-count hint">{{ p.markers|length }} elemento(s) colocado(s)</span>
+      <div class="plano-zoom" title="Zoom (también Ctrl + rueda del mouse sobre el plano)">
+        <button class="zoom-out">−</button>
+        <span class="zoom-level">100%</span>
+        <button class="zoom-in">＋</button>
+        <button class="zoom-reset">Ajustar</button>
+      </div>
+      <button class="plano-del" title="Eliminar este plano">🗑 Eliminar plano</button>
+    </div>
+    <div class="plano-viewport">
+      <div class="plano-canvas">
+        <img src="{{ url_for('plano_image', network_id=network_id, plano_id=p.id) }}"
+             alt="{{ p.name }}" draggable="false">
+        {% for uid, pos in p.markers.items() %}
+        <div class="plano-marker pm-{{ elementos_map.get(uid, {}).get('cat', '') }}"
+             data-unit="{{ uid }}"
+             style="left: {{ (pos.x * 100)|round(3) }}%; top: {{ (pos.y * 100)|round(3) }}%"
+             title="{{ elementos_map.get(uid, {}).get('name', 'ID ' + uid) }}">{{ uid }}</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="empty">No hay planos subidos para esta red. Usa "⬆ Subir plano".</p>
+  {% endfor %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Pestañas (la activa se recuerda en el hash de la URL)
+  function activateTab(name) {
+    document.querySelectorAll('.tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.id === 'panel-' + name));
+    history.replaceState(null, '', '#' + name);
+  }
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+  });
+  const initialTab = location.hash.slice(1);
+  if (initialTab && document.getElementById('panel-' + initialTab)) {
+    activateTab(initialTab);
+  }
+
+  // Enlace de dispositivo → pestaña Elementos, con la fila resaltada
+  document.querySelectorAll('.device-link').forEach(link => {
+    link.addEventListener('click', ev => {
+      ev.preventDefault();
+      activateTab('elementos');
+      // Limpiar buscador y filtros de columna para que la fila destino esté visible
+      const table = document.getElementById('tbl-elementos');
+      const search = document.querySelector('.table-search[data-target="tbl-elementos"]');
+      if (search) search.value = '';
+      (table._filters || []).forEach(s => { s.value = ''; });
+      applyFilters(table);
+      const row = document.getElementById('elem-' + link.dataset.unit);
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('row-highlight');
+        setTimeout(() => row.classList.remove('row-highlight'), 2500);
+      }
+    });
+  });
+
+  // Aplica el buscador + los filtros de columna de una tabla
+  function applyFilters(table) {
+    const filters = (table._filters || []).map(s => s.value);
+    const search = document.querySelector(`.table-search[data-target="${table.id}"]`);
+    const q = search ? search.value.toLowerCase() : '';
+    const nCols = table.tHead.rows[0].cells.length;
+    [...table.tBodies[0].rows].forEach(row => {
+      if (row.cells.length !== nCols) return;  // fila de mensaje vacío
+      let show = !q || row.textContent.toLowerCase().includes(q);
+      if (show && filters.length) {
+        show = filters.every((v, i) => !v || row.cells[i].textContent.trim() === v);
+      }
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  // Buscador por tabla (solo filas de primer nivel, no las sub-tablas)
+  document.querySelectorAll('.table-search').forEach(input => {
+    input.addEventListener('input', () => {
+      const table = document.getElementById(input.dataset.target);
+      if (table._filters) { applyFilters(table); return; }
+      const q = input.value.toLowerCase();
+      [...table.tBodies[0].rows].forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+  });
+
+  // Filtros por columna (estilo Excel) en Elementos y Luminarias
+  ['tbl-elementos', 'tbl-luminarias'].forEach(tid => {
+    const table = document.getElementById(tid);
+    if (!table || !table.tBodies[0].rows.length) return;
+    const headRow = table.tHead.rows[0];
+    const nCols = headRow.cells.length;
+    const filterRow = table.tHead.insertRow();
+    filterRow.className = 'filter-row';
+    table._filters = [...headRow.cells].map((th, i) => {
+      const values = new Set();
+      [...table.tBodies[0].rows].forEach(r => {
+        if (r.cells.length === nCols) values.add(r.cells[i].textContent.trim());
+      });
+      const sel = document.createElement('select');
+      sel.className = 'col-filter';
+      sel.add(new Option('Todos', ''));
+      [...values]
+        .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+        .forEach(v => sel.add(new Option(v, v)));
+      sel.addEventListener('change', () => applyFilters(table));
+      filterRow.insertCell().appendChild(sel);
+      return sel;
+    });
+  });
+
+  // Guardado automático de intensidades de escena
+  document.querySelectorAll('.level-input').forEach(input => {
+    input.addEventListener('change', async () => {
+      input.classList.remove('saved', 'save-error');
+      try {
+        const resp = await fetch('{{ url_for("scene_levels", network_id=network_id) }}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scene_id: input.dataset.scene,
+            unit_id: input.dataset.unit,
+            level: input.value,
+          }),
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || 'Error al guardar');
+        input.classList.add('saved');
+        setTimeout(() => input.classList.remove('saved'), 1200);
+      } catch (e) {
+        input.classList.add('save-error');
+        input.title = 'No se pudo guardar: ' + e.message;
+      }
+    });
+  });
+
+  // Botones de pulsadores: guardar nº de botones y anotaciones
+  const buttonsUrl = '{{ url_for("button_config", network_id=network_id) }}';
+
+  async function postConfig(url, body, el) {
+    el.classList.remove('saved', 'save-error');
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Error al guardar');
+      el.classList.add('saved');
+      setTimeout(() => el.classList.remove('saved'), 1200);
+      return true;
+    } catch (e) {
+      el.classList.add('save-error');
+      el.title = 'No se pudo guardar: ' + e.message;
+      return false;
+    }
+  }
+
+  document.querySelectorAll('.btncount-input').forEach(input => {
+    input.addEventListener('change', async () => {
+      const ok = await postConfig(buttonsUrl,
+        { unit_id: input.dataset.unit, count: input.value || '0' }, input);
+      if (ok) location.reload();  // redibujar las filas de botones
+    });
+  });
+
+  // Catálogo de nombres por tipo, para poblar el desplegable "Programado"
+  const CATALOGO = {{ catalogo_botones|tojson }};
+
+  function fillProgOptions(select, usa, current) {
+    const items = CATALOGO[usa] || [];
+    select.innerHTML = '';
+    select.add(new Option('—', ''));
+    items.forEach(n => select.add(new Option(n, n)));
+    if (current && !items.includes(current)) {
+      select.add(new Option(current, current));
+    }
+    select.value = current || '';
+  }
+
+  document.querySelectorAll('.btn-usa').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const unit = sel.dataset.unit, btn = sel.dataset.button;
+      const prog = document.querySelector(
+        `.btn-prog[data-unit="${unit}"][data-button="${btn}"]`);
+      fillProgOptions(prog, sel.value, '');  // al cambiar el tipo se reinicia el objetivo
+      postConfig(buttonsUrl, { unit_id: unit, button: btn, usa: sel.value, programado: '' }, sel);
+    });
+  });
+
+  document.querySelectorAll('.btn-prog').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const unit = sel.dataset.unit, btn = sel.dataset.button;
+      const usa = document.querySelector(
+        `.btn-usa[data-unit="${unit}"][data-button="${btn}"]`).value;
+      postConfig(buttonsUrl, { unit_id: unit, button: btn, usa: usa, programado: sel.value }, sel);
+    });
+  });
+
+  // Sensores: guardar modo y escenas de presencia/ausencia
+  const sensorsUrl = '{{ url_for("sensor_config", network_id=network_id) }}';
+
+  function saveSensorConfig(unit, el) {
+    const body = {
+      unit_id: unit,
+      modo: document.querySelector(`.sensor-modo[data-unit="${unit}"]`).value,
+      escena_presencia: document.querySelector(`.sensor-esc-p[data-unit="${unit}"]`).value,
+      escena_ausencia: document.querySelector(`.sensor-esc-a[data-unit="${unit}"]`).value,
+    };
+    return postConfig(sensorsUrl, body, el);
+  }
+
+  // Habilita cada escena según el modo; limpia la que quede deshabilitada
+  function syncSensorScenes(unit) {
+    const modo = document.querySelector(`.sensor-modo[data-unit="${unit}"]`).value;
+    const p = document.querySelector(`.sensor-esc-p[data-unit="${unit}"]`);
+    const a = document.querySelector(`.sensor-esc-a[data-unit="${unit}"]`);
+    p.disabled = !(modo === 'Presencia' || modo === 'Presencia + Ausencia');
+    a.disabled = !(modo === 'Ausencia' || modo === 'Presencia + Ausencia');
+    if (p.disabled) p.value = '';
+    if (a.disabled) a.value = '';
+  }
+
+  document.querySelectorAll('.sensor-modo').forEach(sel => {
+    sel.addEventListener('change', () => {
+      syncSensorScenes(sel.dataset.unit);
+      saveSensorConfig(sel.dataset.unit, sel);
+    });
+  });
+
+  document.querySelectorAll('.sensor-esc').forEach(sel => {
+    sel.addEventListener('change', () => saveSensorConfig(sel.dataset.unit, sel));
+  });
+
+  // Horarios: crear, editar y eliminar
+  const schedulesUrl = '{{ url_for("schedule_config", network_id=network_id) }}';
+
+  document.getElementById('btn-add-horario').addEventListener('click', async () => {
+    const resp = await fetch(schedulesUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create' }),
+    });
+    const data = await resp.json();
+    if (data.ok) location.reload();  // el hash mantiene la pestaña activa
+  });
+
+  document.querySelectorAll('#tbl-horarios .sched-field').forEach(el => {
+    el.addEventListener('change', () => {
+      const row = el.closest('tr');
+      const body = { action: 'update', id: parseInt(row.dataset.sched) };
+      row.querySelectorAll('.sched-field').forEach(f => {
+        body[f.dataset.field] = f.type === 'checkbox' ? f.checked : f.value;
+      });
+      postConfig(schedulesUrl, body, el);
+    });
+  });
+
+  document.querySelectorAll('#tbl-horarios .sched-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      await fetch(schedulesUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id: parseInt(row.dataset.sched) }),
+      });
+      location.reload();
+    });
+  });
+
+  // ── Editor de planos ─────────────────────────────────────────────────────
+  const planosUrl = '{{ url_for("plano_config", network_id=network_id) }}';
+  const ELEMENTOS_MAP = {{ elementos_map|tojson }};
+
+  async function planoPost(body) {
+    const resp = await fetch(planosUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'Error al guardar');
+    return data;
+  }
+
+  document.querySelectorAll('.plano-block').forEach(block => {
+    const planoId  = parseInt(block.dataset.plano);
+    const viewport = block.querySelector('.plano-viewport');
+    const canvas   = block.querySelector('.plano-canvas');
+    const select   = block.querySelector('.plano-element-select');
+    const delBtn   = block.querySelector('.plano-marker-del');
+    const countEl  = block.querySelector('.plano-count');
+
+    // ── Zoom: el plano crece, los marcadores conservan su tamaño en pantalla ──
+    const zoomLabel = block.querySelector('.zoom-level');
+    const ZMIN = 1, ZMAX = 8;
+    let zoom = 1;
+
+    function setZoom(z, px, py) {
+      z = Math.min(ZMAX, Math.max(ZMIN, z));
+      const r = viewport.getBoundingClientRect();
+      if (px === undefined) { px = r.width / 2; py = r.height / 2; }
+      // Punto del plano bajo el cursor, para mantenerlo fijo al escalar
+      const cx = (viewport.scrollLeft + px) / zoom;
+      const cy = (viewport.scrollTop + py) / zoom;
+      zoom = z;
+      canvas.style.width = (zoom * 100) + '%';
+      viewport.scrollLeft = cx * zoom - px;
+      viewport.scrollTop  = cy * zoom - py;
+      zoomLabel.textContent = Math.round(zoom * 100) + '%';
+    }
+
+    block.querySelector('.zoom-in').addEventListener('click', () => setZoom(zoom * 1.25));
+    block.querySelector('.zoom-out').addEventListener('click', () => setZoom(zoom / 1.25));
+    block.querySelector('.zoom-reset').addEventListener('click', () => setZoom(1));
+
+    viewport.addEventListener('wheel', ev => {
+      if (!ev.ctrlKey) return;  // rueda sola = desplazamiento normal
+      ev.preventDefault();
+      const r = viewport.getBoundingClientRect();
+      setZoom(zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15),
+              ev.clientX - r.left, ev.clientY - r.top);
+    }, { passive: false });
+
+    function updateCount() {
+      const n = canvas.querySelectorAll('.plano-marker').length;
+      countEl.textContent = `${n} elemento(s) colocado(s)`;
+    }
+
+    function markerOf(unitId) {
+      return canvas.querySelector(`.plano-marker[data-unit="${unitId}"]`);
+    }
+
+    function syncDelBtn() {
+      delBtn.disabled = !(select.value && markerOf(select.value));
+    }
+
+    function selectMarker(unitId) {
+      canvas.querySelectorAll('.plano-marker.selected')
+            .forEach(m => m.classList.remove('selected'));
+      const m = unitId && markerOf(unitId);
+      if (m) m.classList.add('selected');
+    }
+
+    function placeMarker(unitId, x, y) {
+      let m = markerOf(unitId);
+      if (!m) {
+        const info = ELEMENTOS_MAP[unitId] || {};
+        m = document.createElement('div');
+        m.className = 'plano-marker pm-' + (info.cat || '');
+        m.dataset.unit = unitId;
+        m.textContent = unitId;
+        m.title = info.name || ('ID ' + unitId);
+        canvas.appendChild(m);
+      }
+      m.style.left = (x * 100).toFixed(3) + '%';
+      m.style.top  = (y * 100).toFixed(3) + '%';
+      return m;
+    }
+
+    function relCoords(ev) {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+        y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
+      };
+    }
+
+    // Clic en el plano: coloca (o mueve) el elemento elegido
+    canvas.addEventListener('click', async ev => {
+      if (ev.target.classList.contains('plano-marker')) return;
+      const unitId = select.value;
+      if (!unitId) return;
+      const { x, y } = relCoords(ev);
+      try {
+        await planoPost({ action: 'marker_set', plano_id: planoId,
+                          unit_id: unitId, x, y });
+        placeMarker(unitId, x, y);
+        selectMarker(unitId);
+        updateCount();
+        syncDelBtn();
+      } catch (e) { alert('No se pudo guardar el marcador: ' + e.message); }
+    });
+
+    // Clic en un marcador: lo selecciona en el desplegable
+    // Arrastre de un marcador: lo mueve y guarda al soltar
+    canvas.addEventListener('pointerdown', ev => {
+      const marker = ev.target.closest('.plano-marker');
+      if (!marker) return;
+      ev.preventDefault();
+      const unitId = marker.dataset.unit;
+      select.value = unitId;
+      selectMarker(unitId);
+      syncDelBtn();
+
+      let moved = false;
+      const onMove = mv => {
+        moved = true;
+        const { x, y } = relCoords(mv);
+        marker.style.left = (x * 100).toFixed(3) + '%';
+        marker.style.top  = (y * 100).toFixed(3) + '%';
+      };
+      const onUp = async up => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        if (!moved) return;
+        const { x, y } = relCoords(up);
+        try {
+          await planoPost({ action: 'marker_set', plano_id: planoId,
+                            unit_id: unitId, x, y });
+        } catch (e) { alert('No se pudo mover el marcador: ' + e.message); }
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+
+    select.addEventListener('change', () => {
+      selectMarker(select.value);
+      syncDelBtn();
+      const m = select.value && markerOf(select.value);
+      if (m) m.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    delBtn.addEventListener('click', async () => {
+      const unitId = select.value;
+      const m = unitId && markerOf(unitId);
+      if (!m) return;
+      try {
+        await planoPost({ action: 'marker_remove', plano_id: planoId, unit_id: unitId });
+        m.remove();
+        updateCount();
+        syncDelBtn();
+      } catch (e) { alert('No se pudo quitar el marcador: ' + e.message); }
+    });
+
+    block.querySelector('.plano-rename').addEventListener('change', ev => {
+      postConfig(planosUrl, { action: 'rename', plano_id: planoId,
+                              name: ev.target.value }, ev.target);
+    });
+
+    block.querySelector('.plano-del').addEventListener('click', async () => {
+      if (!confirm('¿Eliminar este plano y sus marcadores?')) return;
+      try {
+        await planoPost({ action: 'delete', plano_id: planoId });
+        location.reload();
+      } catch (e) { alert('No se pudo eliminar el plano: ' + e.message); }
+    });
+
+    syncDelBtn();
+  });
+
+  // Capturar niveles: activa la escena real y lee el dimLevel de las luminarias
+  document.querySelectorAll('.btn-capture').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '⏳ Activando escena…';
+      try {
+        const resp = await fetch(btn.dataset.url, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || 'Error desconocido');
+
+        Object.entries(data.captured).forEach(([unit, level]) => {
+          const input = document.querySelector(
+            `.level-input[data-scene="${btn.dataset.scene}"][data-unit="${unit}"]`);
+          if (input) {
+            input.value = level;
+            input.classList.add('saved');
+            setTimeout(() => input.classList.remove('saved'), 2000);
+          }
+        });
+
+        const n = Object.keys(data.captured).length;
+        btn.textContent = `✔ ${n} capturada${n === 1 ? '' : 's'}` +
+          (data.skipped.length ? ` · ${data.skipped.length} sin conexión` : '');
+        btn.classList.add('capture-ok');
+      } catch (e) {
+        btn.textContent = '✘ ' + e.message;
+        btn.classList.add('capture-error');
+      }
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.disabled = false;
+        btn.classList.remove('capture-ok', 'capture-error');
+      }, 6000);
+    });
+  });
+</script>
+{% endblock %}

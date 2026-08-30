@@ -1,0 +1,30 @@
+# Entorno virtual — se recrea con:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Empaquetado (PyInstaller se construye fuera del proyecto, pero por si acaso)
+build/
+dist/
+*.spec.bak
+
+# Credenciales: viven en el Llavero de macOS, nunca en el repositorio
+.env
+
+# Informes reales de clientes
+reportes/
+
+# Anotaciones del usuario, planos e imágenes cacheadas por red.
+# Son datos de instalaciones reales; el directorio se conserva porque
+# CASAMBI.spec lo empaqueta como semilla del primer arranque.
+data/*
+!data/.gitkeep
+
+# macOS
+.DS_Store
+
+# Ajustes locales de Claude Code (rutas y permisos de esta máquina)
+.claude/settings.local.json
