@@ -13,6 +13,18 @@
   --bg:        #F4F7FB;
   --text:      #2b2b2b;
   --sidebar-w: 260px;
+  /* Estados de conectividad (COLOR_EST_* / COLOR_TXT_* de report.py) */
+  --est-ok:      #E2EFDA;
+  --est-fallo:   #FBE0E0;
+  --est-aviso:   #FFF2CC;
+  --est-reposo:  #F2F2F2;
+  --txt-ok:      #375623;
+  --txt-fallo:   #9C0006;
+  --txt-aviso:   #9C6500;
+  --txt-reposo:  #6B6B6B;
+  /* Planos de cobertura (COLOR_COB_* de report.py) */
+  --cob-pared:   #C00000;
+  --cob-nodo:    #00B0F0;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -657,6 +669,109 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   z-index: 2;
 }
 
+/* ── Planos importados del Simulador de Cobertura ─────────────────────────── */
+/* Sus nodos vienen del simulador, así que el plano no es un lienzo donde
+   colocar elementos: el cursor lo dice antes que cualquier texto. */
+.plano-cobertura .plano-canvas { cursor: default; }
+
+.plano-tag {
+  background: var(--pale);
+  color: var(--navy);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Las paredes del modelo de propagación, superpuestas sin estirar el trazo:
+   `vector-effect` mantiene el grosor aunque el viewBox se deforme al escalar. */
+.plano-paredes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.plano-paredes line {
+  stroke: var(--cob-pared);
+  stroke-width: 2;
+  stroke-opacity: .65;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+/* Huecos de losa (dobles alturas, cubos de escalera): donde el nivel no tiene
+   piso. Gris y punteado, para que no se lean como un cuarto ni como una pared. */
+.plano-paredes polygon.plano-hueco {
+  fill: rgba(75, 85, 99, .12);
+  stroke: #4B5563;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.plano-nodo {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 30px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 13px;
+  background: var(--cob-nodo);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 5px rgba(0,0,0,.45);
+  cursor: pointer;
+  user-select: none;
+  z-index: 1;
+}
+.plano-nodo.pn-gateway  { background: var(--purple); }
+/* Asociado a una unidad real: deja de ser una propuesta y pasa a ser inventario. */
+.plano-nodo.pn-asociado { background: var(--blue); box-shadow: 0 0 0 3px rgba(46,117,182,.35); }
+
+.plano-nodos-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.plano-nodos-tabla th,
+.plano-nodos-tabla td {
+  border: 1px solid var(--border);
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: middle;
+}
+.plano-nodos-tabla th {
+  background: var(--navy);
+  color: #fff;
+  font-size: 12px;
+}
+.plano-nodos-tabla tbody tr:nth-child(even) { background: var(--alt-row); }
+.plano-nodos-tabla tr.nodo-activo { outline: 2px solid #FFD34D; }
+.plano-nodos-tabla .nodo-nota { color: var(--txt-reposo); }
+.plano-nodos-tabla .hint { margin-left: 6px; }
+.plano-nodos-tabla select { width: 100%; max-width: 420px; }
+
+.nodo-badge {
+  background: var(--pale);
+  color: var(--navy);
+  border-radius: 8px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.plano-cobertura-nota { margin-top: 8px; }
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 /* ── Ajustes (credenciales) ───────────────────────────────────────────────── */
 .sidebar-settings {
@@ -788,6 +903,68 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   background: #f1f3f6; border-color: #d3d9e2; color: #5a6472;
 }
 .conexion-sin-gateway .conexion-luz { background: #9aa5b4; }
+
+/* ── Conectividad ─────────────────────────────────────────────────────────── */
+/* Badge de alerta en la pestaña: solo aparece si hay equipos sin señal. */
+.badge-alerta {
+  background: var(--est-fallo);
+  color: var(--txt-fallo);
+  font-weight: 600;
+}
+.tab.active .badge-alerta { background: var(--txt-fallo); color: #fff; }
+
+.diag-veredicto {
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  background: var(--est-ok);
+  border-color: #a5d6a7;
+  color: var(--txt-ok);
+}
+.diag-veredicto.diag-gateway-offline {
+  background: var(--est-aviso); border-color: #ffcc80; color: var(--txt-aviso);
+}
+.diag-veredicto.diag-sin-gateway,
+.diag-veredicto.diag-sin-dispositivos {
+  background: var(--est-reposo); border-color: #d3d9e2; color: var(--txt-reposo);
+}
+.diag-veredicto.diag-con-fallos {
+  background: var(--est-fallo); border-color: #f0b4b4; color: var(--txt-fallo);
+}
+
+.diag-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.diag-chip {
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  background: var(--est-reposo);
+  color: var(--txt-reposo);
+}
+.diag-chip b { font-size: 14px; margin-right: 3px; }
+.diag-chip-ok     { background: var(--est-ok);     color: var(--txt-ok); }
+.diag-chip-fallo  { background: var(--est-fallo);  color: var(--txt-fallo); }
+.diag-chip-aviso  { background: var(--est-aviso);  color: var(--txt-aviso); }
+
+.estado {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.estado-responde     { background: var(--est-ok);     color: var(--txt-ok); }
+.estado-no-responde  { background: var(--est-fallo);  color: var(--txt-fallo); }
+.estado-en-reposo,
+.estado-sin-lectura  { background: var(--est-reposo); color: var(--txt-reposo); }
+
+/* La fila entera se tiñe para localizar el problema sin leer columna a columna */
+#tbl-conectividad tr.fila-fallo td { background: #fdf3f3; }
+#tbl-conectividad tr.fila-aviso td { background: #fffbf0; }
 
 /* ── Cuentas ──────────────────────────────────────────────────────────────── */
 .net-account {

@@ -36,12 +36,14 @@ from flask import (
     url_for,
 )
 
+import cobertura
 import credentials
 from casambi_api import CasambiAPIError, CasambiClient
 from report import (
     _classify_unit,
     _controls_summary,
     _fixture_controls_summary,
+    diagnostico_conectividad,
     generate_report,
 )
 
@@ -243,9 +245,13 @@ def _download_network_images(network_id: str, network: dict) -> Path:
             if icon:
                 image_ids.add(icon)
 
-    # Iconos de los elementos colocados en planos manuales (subidos en la web)
+    # Iconos de los elementos colocados en planos manuales (subidos en la web) y
+    # de las unidades que el usuario haya asociado a un nodo de cobertura.
     for plano in _load_planos(network_id):
-        for uid in plano.get("markers", {}):
+        uids = list(plano.get("markers", {}))
+        uids += [n.get("unit_id")
+                 for n in (plano.get("cobertura") or {}).get("nodos", [])]
+        for uid in uids:
             try:
                 icon = unit_image_map.get(int(uid))
             except (TypeError, ValueError):
@@ -270,6 +276,12 @@ def _download_network_images(network_id: str, network: dict) -> Path:
 # data/planos_<red>.json como [{"id", "name", "image", "markers"}], donde
 # markers = {unit_id: {"x": 0-1, "y": 0-1}} (coordenadas relativas, igual que
 # la galería de Casambi). Las imágenes viven en data/planos/ como PNG.
+#
+# Un plano importado del Simulador de Cobertura (.casambi) añade dos claves:
+# "origen": "cobertura" y un bloque "cobertura" con los nodos y las paredes ya
+# en relativas (ver cobertura.py). Sus nodos NO son `markers`: los coloca el
+# simulador, no el usuario, así que ese plano no admite el flujo de clic para
+# situar elementos — solo asociar cada nodo con una unidad real de la red.
 
 PLANOS_DIR = DATA_DIR / "planos"
 PLANO_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -454,36 +466,6 @@ def _is_pulsador(u: dict) -> bool:
     ]
 
 
-def _estado_conexion(data: dict) -> dict:
-    """
-    Estado real de la red para avisar antes de tocar nada.
-
-    El API no expone si el gateway está conectado: `network['gateway']` solo
-    trae su nombre (el gateway que la red tiene configurado). Lo que sí indica
-    si la red es alcanzable ahora mismo es que alguna unidad reporte
-    `online: true` en el estado — sin eso, ningún control llega a las luces.
-    """
-    state = data["state"]
-    units = state.get("units", [])
-    online = [u for u in units if u.get("online")]
-    gateway = (state.get("gateway") or {}).get("name") or ""
-
-    if online:
-        nivel = "online"
-    elif gateway:
-        nivel = "gateway-offline"
-    else:
-        nivel = "sin-gateway"
-
-    return {
-        "nivel": nivel,
-        "gateway": gateway,
-        "online": len(online),
-        "total": len(units),
-        "escenas_activas": len(state.get("activeScenes") or {}),
-    }
-
-
 def _build_report_context(network_id: str, data: dict) -> dict:
     network = data["network"]
     fixtures = data["fixtures"]
@@ -614,7 +596,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         "network": network,
         "fetched_at": data["fetched_at"],
         "catalogo_botones": catalogo_botones,
-        "conexion": _estado_conexion(data),
+        "conexion": diagnostico_conectividad(network, data["state"]),
         "summary": {
             "total": len(units),
             "luminarias": type_counts.get("Luminaria", 0),
@@ -824,12 +806,14 @@ def network_excel(network_id):
 
     images_dir = _download_network_images(str(network_id), data["network"])
 
-    # Planos manuales con al menos un elemento colocado
+    # Planos con algo que mostrar: elementos colocados a mano, o nodos y paredes
+    # importados del simulador de cobertura.
     manual_planos = [
         {"name": p.get("name", "-"), "path": PLANOS_DIR / p["image"],
-         "markers": p.get("markers", {})}
+         "markers": p.get("markers", {}), "cobertura": p.get("cobertura")}
         for p in _load_planos(str(network_id))
-        if p.get("image") and p.get("markers") and (PLANOS_DIR / p["image"]).exists()
+        if p.get("image") and (PLANOS_DIR / p["image"]).exists()
+        and (p.get("markers") or p.get("cobertura"))
     ]
 
     REPORTS_DIR.mkdir(exist_ok=True)
@@ -849,51 +833,102 @@ def network_excel(network_id):
 
 @app.route("/network/<network_id>/planos/upload", methods=["POST"])
 def plano_upload(network_id):
-    """Sube un plano en PDF/JPG/PNG; los PDF se convierten a imagen."""
+    """
+    Sube un plano en PDF/JPG/PNG (los PDF se convierten a imagen) o importa un
+    proyecto del Simulador de Cobertura (.casambi), del que se extraen el plano,
+    los nodos y las paredes.
+    """
     back = redirect(url_for("network_view", network_id=network_id) + "#planos")
 
     file = request.files.get("file")
     if file is None or not file.filename:
-        flash("Selecciona un archivo PDF, JPG o PNG.", "error")
+        flash("Selecciona un archivo PDF, JPG, PNG o .casambi.", "error")
         return back
 
+    es_cobertura = cobertura.es_proyecto_cobertura(file.filename)
     ext = Path(file.filename).suffix.lower()
-    if ext not in PLANO_ALLOWED_EXT:
-        flash(f"Formato no soportado ({ext}). Usa PDF, JPG o PNG.", "error")
+    if not es_cobertura and ext not in PLANO_ALLOWED_EXT:
+        flash(f"Formato no soportado ({ext}). Usa PDF, JPG, PNG o .casambi.", "error")
         return back
 
     raw_page = (request.form.get("page") or "1").strip()
     page = int(raw_page) if raw_page.isdigit() and int(raw_page) >= 1 else 1
 
+    # (imagen, bloque de cobertura o None). Un proyecto del simulador con varios
+    # niveles da una entrada por nivel: cada uno tiene su plano y sus coordenadas.
+    nuevos: list[tuple[Image.Image, dict | None]] = []
+    avisos_cobertura: list[str] = []
     try:
         data = file.read()
-        if ext == ".pdf":
-            img = _pdf_to_image(data, page)
+        if es_cobertura:
+            niveles, avisos_cobertura = cobertura.parse_proyecto(data)
+            nuevos = [(img, datos) for img, datos in niveles]
+        elif ext == ".pdf":
+            nuevos = [(_pdf_to_image(data, page), None)]
         else:
             img = Image.open(io.BytesIO(data))
-            img = ImageOps.exif_transpose(img).convert("RGB")
-        img.thumbnail((PLANO_MAX_PX, PLANO_MAX_PX), Image.LANCZOS)
+            nuevos = [(ImageOps.exif_transpose(img).convert("RGB"), None)]
+        # Las relativas del proyecto son fracciones del plano, así que el
+        # reescalado no las invalida.
+        for img, _ in nuevos:
+            img.thumbnail((PLANO_MAX_PX, PLANO_MAX_PX), Image.LANCZOS)
+    except cobertura.CoberturaError as e:
+        flash(str(e), "error")
+        return back
     except Exception as e:
         flash(f"No se pudo procesar el archivo: {e}", "error")
         return back
 
     items = _load_planos(str(network_id))
-    new_id = max((int(p.get("id", 0)) for p in items), default=0) + 1
-    filename = f"plano_{network_id}_{new_id}.png"
     PLANOS_DIR.mkdir(parents=True, exist_ok=True)
-    img.save(PLANOS_DIR / filename)
+    nombre_base = (request.form.get("name") or "").strip()
+    nombres = []
+    for img, datos in nuevos:
+        new_id = max((int(p.get("id", 0)) for p in items), default=0) + 1
+        filename = f"plano_{network_id}_{new_id}.png"
+        img.save(PLANOS_DIR / filename)
 
-    name = (request.form.get("name") or "").strip() or Path(file.filename).stem
-    items.append({"id": new_id, "name": name, "image": filename, "markers": {}})
+        name = nombre_base
+        if not name and datos:
+            name = datos["proyecto"] or "Cobertura"
+        if not name:
+            name = Path(file.filename).stem
+        # El nombre del nivel es lo que distingue los planos de un mismo
+        # proyecto, en la pestaña y en la hoja Planos del Excel.
+        if datos and datos.get("nivel"):
+            name = f"{name} · {datos['nivel']}"
+
+        plano = {"id": new_id, "name": name, "image": filename, "markers": {}}
+        if datos:
+            plano["origen"] = "cobertura"
+            plano["cobertura"] = datos
+        items.append(plano)
+        nombres.append(name)
     _save_planos(str(network_id), items)
 
-    flash(f'Plano "{name}" subido. Elige un elemento y haz clic sobre el plano para colocarlo.', "ok")
+    if es_cobertura:
+        total_nodos = sum(len(d["nodos"]) for _, d in nuevos)
+        total_paredes = sum(len(d["paredes"]) for _, d in nuevos)
+        if len(nuevos) == 1:
+            flash(f'Cobertura "{nombres[0]}" importada: {total_nodos} nodo(s) y '
+                  f'{total_paredes} pared(es). Asocia cada nodo con su unidad de la red.', "ok")
+        else:
+            flash(f'Cobertura importada en {len(nuevos)} planos, uno por nivel '
+                  f'({", ".join(nombres)}): {total_nodos} nodo(s) y {total_paredes} '
+                  f'pared(es) en total. Asocia cada nodo con su unidad de la red.', "ok")
+        if avisos_cobertura:
+            flash("Niveles sin importar: " + " ".join(avisos_cobertura), "error")
+    else:
+        flash(f'Plano "{nombres[0]}" subido. Elige un elemento y haz clic sobre el plano para colocarlo.', "ok")
     return back
 
 
 @app.route("/network/<network_id>/planos", methods=["POST"])
 def plano_config(network_id):
-    """Coloca/quita marcadores, renombra o elimina un plano manual."""
+    """
+    Coloca/quita marcadores, renombra o elimina un plano manual, y asocia los
+    nodos de un plano de cobertura con las unidades reales de la red.
+    """
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "")).strip()
 
@@ -919,6 +954,24 @@ def plano_config(network_id):
     elif action == "marker_remove":
         unit_id = str(payload.get("unit_id", "")).strip()
         plano.get("markers", {}).pop(unit_id, None)
+
+    elif action == "nodo_unit":
+        # Asociación nodo simulado → unidad instalada. El simulador etiqueta los
+        # nodos N1, N2…, nombres que no se parecen a los de la red, así que este
+        # emparejamiento solo puede hacerlo el usuario. Cadena vacía = desasociar.
+        nodo_id = str(payload.get("nodo_id", "")).strip()
+        unit_id = str(payload.get("unit_id", "")).strip()
+        nodos = (plano.get("cobertura") or {}).get("nodos", [])
+        nodo = next((n for n in nodos if str(n.get("id")) == nodo_id), None)
+        if nodo is None:
+            return jsonify({"ok": False, "error": "Nodo no encontrado"}), 404
+        if unit_id:
+            try:
+                nodo["unit_id"] = int(unit_id)
+            except ValueError:
+                return jsonify({"ok": False, "error": "Unidad inválida"}), 400
+        else:
+            nodo["unit_id"] = None
 
     elif action == "rename":
         plano["name"] = str(payload.get("name", "")).strip() or plano.get("name", "")

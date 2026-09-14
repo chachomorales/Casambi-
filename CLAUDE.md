@@ -110,9 +110,10 @@ esa etapa previa; el flujo vigente es `desktop.py`.
 | `desktop.py` | Lanzador: puerto libre, hilo Flask, ventana pywebview. Prepara `CASAMBI_HOME` |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
-| `report.py` | Excel con openpyxl: 10 hojas, portada con tarjetas, planos compuestos con Pillow |
+| `report.py` | Excel con openpyxl: 11 hojas, portada con tarjetas, planos compuestos con Pillow. También `diagnostico_conectividad()`, que usan la hoja Conectividad y la interfaz |
 | `credentials.py` | Cuentas múltiples en el Llavero de macOS vía `/usr/bin/security` |
-| `templates/`, `static/` | Interfaz: `network.html` (8 pestañas) es el grueso |
+| `cobertura.py` | Importa proyectos `.casambi` del Simulador de Cobertura: plano, nodos y paredes |
+| `templates/`, `static/` | Interfaz: `network.html` (9 pestañas) es el grueso |
 
 ## Cómo fluyen los datos
 
@@ -137,6 +138,54 @@ no la API.**
 Los planos se pueden subir a mano (PDF vía PyMuPDF, o imagen) y colocar marcadores;
 la galería de Casambi (`network['photos']`) ya trae posiciones y se compone aparte.
 Las imágenes se cachean en `data/images/<image_id>.png` — los IDs son inmutables.
+
+### Planos importados del Simulador de Cobertura
+
+El proyecto hermano `~/Developer/casambi-wifi-coverage` (apps Swift de preventa) guarda
+sus proyectos como `.casambi`: JSON plano con el plano en un data URL, los nodos y las
+paredes en **coordenadas del mundo, en metros**. `cobertura.py` los traduce a relativas
+0-1 —las mismas que `markers`— y `plano_upload()` las persiste en el mismo
+`planos_<red>.json` con `"origen": "cobertura"` y un bloque `"cobertura"`.
+
+La conversión sale de `SceneRenderer.swift`: la esquina superior izquierda de la imagen
+está en `(imageOriginX, imageOriginY)`, así que
+`px = (x - imageOriginX) / metersPerPixel`, y la relativa es `px / anchoPx`. Como son
+fracciones, el reescalado a `PLANO_MAX_PX` no las invalida.
+
+**Proyectos de varios niveles (formato 4).** Desde el 2026-09-13 el simulador admite
+pisos: cada nivel guarda su plano, escala, origen, nodos, paredes y huecos de losa
+dentro de `levels`, y los campos de la raíz van vacíos. Leído como un proyecto de un
+nivel, eso daba «no tiene plano cargado». `parse_proyecto()` devuelve un plano por
+nivel, convirtiendo cada uno con su propio origen y escala, y `plano_upload()` los
+guarda por separado con el nombre del nivel. Un nivel sin plano, sin escala o vacío
+se salta con aviso; el archivo solo se rechaza si no queda ninguno. Un proyecto de un
+nivel sigue escribiéndose plano (v1-v3), igual que antes: la lista `levels` solo
+existe con dos o más. Una versión mayor a 4 se rechaza a propósito, porque el
+simulador sube la versión justo cuando un lector anterior leería mal el archivo.
+
+**El `.casambi` no guarda el mapa de calor.** El `image` embebido es el plano
+arquitectónico desnudo; el heatmap y las paredes son vectores que el motor Swift calcula
+en vivo y nunca se serializan. Por eso se importa la *planificación* (qué se simuló,
+dónde, con qué paredes) y el plano se redibuja con marcadores propios. Para llevar el
+mapa de calor al informe hay que exportarlo aparte desde el simulador (⇧⌘E) y subirlo
+como una imagen más. Recalcularlo en Python exigiría portar ~700 líneas de Swift
+(`Propagation`, `Raycast`, `WallIndex`, `Heatmap`, `CasambiProfile`) y dejaría dos
+implementaciones de la misma física; se descartó por eso.
+
+Dos consecuencias de diseño que conviene respetar:
+
+- **Los nodos no son `markers`.** Los coloca el simulador, no el usuario, así que ese
+  plano no admite el flujo de clic para situar elementos (`esCobertura` lo corta en el
+  JS y `plano-cobertura` cambia el cursor). Lo único que se edita es la asociación
+  nodo → unidad real, acción `nodo_unit`.
+- **Esa asociación solo puede hacerla el usuario.** El simulador etiqueta los nodos
+  `N1`, `N2`… — nombres que no se parecen a los de las unidades de la red, de modo que
+  no hay emparejamiento automático posible. Sin asociar, el nodo es una posición
+  propuesta y se dibuja en cian; asociado toma el color de su categoría.
+
+En la hoja Planos van al final, con leyenda propia (`Nº · Nodo · Unidad asociada ·
+Categoría · Nota de montaje`) y bajo el título `COBERTURA SIMULADA:`: son planificación,
+no inventario, y mezclarlos con lo instalado haría leer una propuesta como un hecho.
 
 ## Datos y credenciales
 
@@ -164,6 +213,29 @@ Las imágenes se cachean en `data/images/<image_id>.png` — los IDs son inmutab
 - `CasambiClient._normalize_network()` convierte a lista las colecciones que la API
   devuelve como diccionario (`units`, `groups`, `scenes`). Trabaja siempre con listas
   aguas abajo.
+- `controls` viene **plano** en la config de la red (`[{...}]`) y **anidado** en el
+  estado (`[[{...}]]`). `_classify_unit()` y `_controls_summary()` esperan el plano:
+  pásales unidades de `network`, nunca de `state`, o revientan con
+  `'list' object has no attribute 'get'`.
+
+## Conectividad: dos falsos positivos que hay que respetar
+
+La hoja Conectividad y la pestaña del mismo nombre salen de
+`report.diagnostico_conectividad(network, state)`. Su lógica no es «listar lo que está
+offline», y hay dos razones medidas sobre las redes reales:
+
+- **`online` depende del gateway.** Si la pasarela no responde, las unidades salen
+  todas offline a la vez: en el barrido de las 39 redes, 35 daban 0 online. Un listado
+  ingenuo acusaría a 130 luminarias sanas. Por eso solo se marca `No responde` cuando
+  *alguna* unidad responde (`fiable`); si no, el estado es `Sin lectura` y el veredicto
+  apunta al gateway.
+- **Los `BatterySwitch` duermen.** De 180 en total, ninguno estaba online, y son los
+  únicos 153 sin `firmwareVersion`. Solo despiertan al pulsarlos, así que se cuentan
+  aparte como `En reposo`, nunca como avería (`_TIPOS_EN_REPOSO`).
+
+`condition` es el otro dato aprovechable: la API no lo documenta, valía 0 en 1.544 de
+1.550 unidades y 128 en seis luminarias por lo demás sanas (`status: "ok"`, online).
+Se muestra como aviso sin traducirlo a una causa, porque no sabemos cuál es.
 
 ## Convenciones
 

@@ -43,6 +43,22 @@ COLOR_CARD_GROUP    = "4472C4"   # mid blue – grupos
 COLOR_CARD_SCENE    = "00B0F0"   # cyan – escenas
 COLOR_CARD_TOTAL    = "1F3864"   # navy – total
 
+# Diagnóstico de conectividad (hoja Conectividad)
+COLOR_EST_OK       = "E2EFDA"   # verde muy claro – responde
+COLOR_EST_FALLO    = "FBE0E0"   # rojo muy claro  – no responde
+COLOR_EST_AVISO    = "FFF2CC"   # ámbar claro     – el equipo reporta una condición
+COLOR_EST_REPOSO   = "F2F2F2"   # gris claro      – duerme por diseño
+COLOR_TXT_OK       = "375623"
+COLOR_TXT_FALLO    = "9C0006"
+COLOR_TXT_AVISO    = "9C6500"
+COLOR_TXT_REPOSO   = "6B6B6B"
+
+# Planos importados del Simulador de Cobertura
+COLOR_COB_PARED    = "C00000"   # rojo – paredes del modelo de propagación
+COLOR_COB_NODO     = "00B0F0"   # cian – nodo simulado sin unidad real asociada
+COLOR_COB_NOTA     = "6B6B6B"   # gris – texto del subtítulo de la sección
+COLOR_COB_HUECO    = "4B5563"   # gris pizarra – huecos de losa del nivel
+
 THIN = Side(style="thin", color=COLOR_BORDER)
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
@@ -185,6 +201,178 @@ def _unit_soporta(unit: dict, fixtures: dict) -> str:
     fid = unit.get("fixtureId")
     fixture = fixtures.get(fid, {}) if fid else {}
     return _fixture_controls_summary(fixture) or _controls_summary(unit) or "-"
+
+
+# ── Diagnóstico de conectividad ───────────────────────────────────────────────
+# El estado (/v1/networks/{id}/state) trae por unidad: online, on, dimLevel,
+# activeSceneId, condition y —solo si la red es alcanzable— status.
+#
+# Dos cautelas, aprendidas mirando redes reales, que decidieron este diseño:
+#
+#  · `online` significa "responde ahora mismo", y eso pasa por el gateway. Si el
+#    gateway está caído, las 130 unidades de la red salen offline a la vez: el
+#    fallo es de la red, no de los equipos. Por eso solo se señala a un
+#    dispositivo concreto cuando *algún* otro responde; si no responde ninguno,
+#    no hay lectura que interpretar y decirlo así evita un informe que acusa a
+#    130 luminarias sanas.
+#  · Los pulsadores a pila (BatterySwitch) duermen y solo despiertan al
+#    pulsarlos: no aparecen online jamás, y son los únicos que ni publican
+#    firmwareVersion. Tratarlos como avería sería un falso positivo permanente,
+#    así que se cuentan aparte.
+
+# Tipos que están offline por diseño, no por avería.
+_TIPOS_EN_REPOSO = {"batteryswitch"}
+
+EST_RESPONDE    = "Responde"
+EST_NO_RESPONDE = "No responde"
+EST_REPOSO      = "En reposo"
+EST_SIN_LECTURA = "Sin lectura"
+
+
+def _dim_pct(unit: dict) -> str:
+    """dimLevel viene en 0-1; se muestra en % como en el resto del informe."""
+    level = unit.get("dimLevel")
+    if level is None:
+        return "-"
+    return f"{round(level * 100)}%"
+
+
+def _aviso_unidad(unit: dict) -> str:
+    """
+    Texto de aviso si el propio equipo reporta algo raro.
+
+    `condition` es un indicador de la unidad que la API no documenta: en las
+    redes medidas vale 0 en 1.544 de 1.550 unidades, y 128 en seis luminarias
+    que por lo demás están online y con status "ok". No se traduce a una causa
+    concreta porque no sabemos cuál es; se señala para que el técnico la mire.
+    """
+    avisos = []
+    condition = unit.get("condition")
+    if condition:
+        avisos.append(f"El equipo reporta condition {condition} — revisar")
+    status = unit.get("status")
+    if status and str(status).lower() != "ok":
+        avisos.append(f"status «{status}»")
+    return "; ".join(avisos)
+
+
+def diagnostico_conectividad(network: dict, state: dict) -> dict:
+    """
+    Estado de conexión de la red y de cada dispositivo, para reportar problemas.
+
+    Devuelve el veredicto de la red y una lista `dispositivos` ordenada por
+    urgencia (primero lo que no responde, luego lo que avisa). `fiable` indica
+    si la lectura permite culpar a un dispositivo concreto: es False cuando no
+    responde nadie, porque entonces lo único que se sabe es que la red no es
+    alcanzable.
+
+    Mantiene las claves que ya usaba la interfaz (`nivel`, `gateway`, `online`,
+    `total`, `escenas_activas`) para que el aviso de la cabecera siga igual.
+    """
+    units       = network.get("units", [])
+    state_units = {u.get("id"): u for u in state.get("units", [])}
+    group_map   = {g.get("id"): g.get("name", "-") for g in network.get("groups", [])}
+    scene_map   = {s.get("id"): s.get("name", "-") for s in network.get("scenes", [])}
+    gateway     = (state.get("gateway") or network.get("gateway") or {}).get("name") or ""
+
+    responden = sum(1 for u in state_units.values() if u.get("online"))
+    fiable    = responden > 0
+
+    dispositivos = []
+    for unit in units:
+        live      = state_units.get(unit.get("id"), {})
+        en_reposo = (unit.get("type") or "").lower() in _TIPOS_EN_REPOSO
+
+        if en_reposo:
+            estado = EST_REPOSO
+        elif live.get("online"):
+            estado = EST_RESPONDE
+        elif fiable:
+            estado = EST_NO_RESPONDE
+        else:
+            estado = EST_SIN_LECTURA
+
+        aviso    = _aviso_unidad(live)
+        problema = estado == EST_NO_RESPONDE
+        gid      = unit.get("groupId", 0)
+
+        dispositivos.append({
+            "id":            unit.get("id", "-"),
+            "name":          unit.get("name", "-"),
+            "category":      _classify_unit(unit),
+            "type":          unit.get("type", "-"),
+            "group":         group_map.get(gid, "-") if gid else "-",
+            "estado":        estado,
+            "problema":      problema,
+            "aviso":         aviso,
+            # on/dimLevel/escena solo dicen algo si el equipo está respondiendo
+            "encendido":     ("Sí" if live.get("on") else "No") if estado == EST_RESPONDE else "-",
+            "nivel":         _dim_pct(live) if estado == EST_RESPONDE else "-",
+            "escena":        scene_map.get(live.get("activeSceneId"), "-")
+                             if live.get("activeSceneId") else "-",
+            "firmware":      live.get("firmwareVersion") or unit.get("firmwareVersion") or "-",
+            "address":       unit.get("address", "-"),
+        })
+
+    # Primero lo que hay que mirar: averías, luego avisos, luego el resto.
+    dispositivos.sort(key=lambda d: (
+        0 if d["problema"] else 1 if d["aviso"] else 2,
+        d["category"],
+        str(d["name"]),
+    ))
+
+    no_responden = sum(1 for d in dispositivos if d["problema"])
+    en_reposo    = sum(1 for d in dispositivos if d["estado"] == EST_REPOSO)
+    sin_lectura  = sum(1 for d in dispositivos if d["estado"] == EST_SIN_LECTURA)
+    con_aviso    = sum(1 for d in dispositivos if d["aviso"])
+
+    if not units:
+        nivel = "sin-dispositivos"
+    elif fiable:
+        nivel = "online"
+    elif gateway:
+        nivel = "gateway-offline"
+    else:
+        nivel = "sin-gateway"
+
+    if nivel == "sin-dispositivos":
+        veredicto = "La red no tiene ningún dispositivo dado de alta."
+    elif nivel == "online":
+        if no_responden:
+            veredicto = (
+                f"La red responde, pero {no_responden} de "
+                f"{len(units) - en_reposo} dispositivos no dan señal. "
+                "Revisar esos equipos: alimentación, alcance de malla o avería."
+            )
+        else:
+            veredicto = "Todos los dispositivos que deben responder están en línea."
+    elif nivel == "gateway-offline":
+        veredicto = (
+            f"Ningún dispositivo responde. La red tiene configurado el gateway "
+            f"«{gateway}», así que lo primero a revisar es el gateway, no los "
+            "equipos: mientras no haya pasarela no se puede saber cuáles fallan."
+        )
+    else:
+        veredicto = (
+            "Ningún dispositivo responde y la red no tiene gateway configurado. "
+            "Sin pasarela la nube no ve el estado de los equipos."
+        )
+
+    return {
+        "nivel":           nivel,
+        "gateway":         gateway,
+        "fiable":          fiable,
+        "veredicto":       veredicto,
+        "total":           len(units),
+        "online":          responden,       # nombre histórico, lo usa la cabecera
+        "responden":       responden,
+        "no_responden":    no_responden,
+        "en_reposo":       en_reposo,
+        "sin_lectura":     sin_lectura,
+        "con_aviso":       con_aviso,
+        "escenas_activas": len(state.get("activeScenes") or {}),
+        "dispositivos":    dispositivos,
+    }
 
 
 # ── Sheet builders ────────────────────────────────────────────────────────────
@@ -428,6 +616,148 @@ def _sheet_red(wb: Workbook, network: dict, state: dict) -> None:
 
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 35
+
+
+def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
+    """
+    Quién responde y quién no, para reportar problemas de red.
+
+    Encabeza con el veredicto de la red entera a propósito: sin gateway todo
+    sale offline, y la lista de abajo solo acusa a un equipo cuando la lectura
+    permite distinguirlo (ver diagnostico_conectividad).
+    """
+    ws = wb.create_sheet("Conectividad")
+    ws.sheet_view.showGridLines = False
+
+    diag = diagnostico_conectividad(network, state)
+
+    # Anchos fijos: el veredicto es un texto largo en una celda combinada y
+    # _auto_width ensancharía la columna del ID hasta el tope.
+    for col, width in zip("ABCDEFGHIJK",
+                          (8, 30, 20, 20, 14, 34, 11, 9, 20, 12, 16)):
+        ws.column_dimensions[col].width = width
+
+    ws.merge_cells("A1:K1")
+    title = ws["A1"]
+    title.value = "DIAGNÓSTICO DE CONECTIVIDAD"
+    title.font = Font(bold=True, size=16, color=COLOR_HEADER_FG, name="Calibri")
+    title.fill = _header_fill()
+    title.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    def _dato(row: int, label: str, value) -> None:
+        ws.merge_cells(f"A{row}:C{row}")
+        lbl = ws.cell(row=row, column=1, value=label)
+        lbl.font = Font(bold=True, size=10, name="Calibri")
+        lbl.alignment = Alignment(vertical="center")
+        ws.merge_cells(f"D{row}:F{row}")
+        val = ws.cell(row=row, column=4, value=value)
+        val.font = Font(size=10, name="Calibri")
+        val.alignment = Alignment(vertical="center")
+        for col in range(1, 7):
+            ws.cell(row=row, column=col).border = BORDER
+        ws.row_dimensions[row].height = 18
+
+    _dato(2, "Red", network.get("name", "-"))
+    _dato(3, "Gateway configurado", diag["gateway"] or "— ninguno —")
+    _dato(4, "Lectura tomada", datetime.now().strftime("%d/%m/%Y %H:%M"))
+
+    # Veredicto de la red: lo primero que hay que leer antes de mirar la tabla
+    _FILL_NIVEL = {
+        "online":           (COLOR_EST_OK,     COLOR_TXT_OK),
+        "gateway-offline":  (COLOR_EST_AVISO,  COLOR_TXT_AVISO),
+        "sin-gateway":      (COLOR_EST_REPOSO, COLOR_TXT_REPOSO),
+        "sin-dispositivos": (COLOR_EST_REPOSO, COLOR_TXT_REPOSO),
+    }
+    if diag["nivel"] == "online" and diag["no_responden"]:
+        bg, fg = COLOR_EST_FALLO, COLOR_TXT_FALLO
+    else:
+        bg, fg = _FILL_NIVEL[diag["nivel"]]
+
+    ws.merge_cells("A6:K6")
+    ver = ws.cell(row=6, column=1, value=diag["veredicto"])
+    ver.font = Font(bold=True, size=11, color=fg, name="Calibri")
+    ver.fill = PatternFill("solid", fgColor=bg)
+    ver.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    for col in range(1, 12):
+        ws.cell(row=6, column=col).border = BORDER
+    ws.row_dimensions[6].height = 34
+
+    ws.merge_cells("A8:K8")
+    sec = ws.cell(row=8, column=1, value="RESUMEN")
+    sec.font = Font(bold=True, size=11, color=COLOR_COVER_DARK, name="Calibri")
+    sec.fill = _section_fill()
+    sec.alignment = Alignment(horizontal="left", vertical="center")
+    for col in range(1, 12):
+        ws.cell(row=8, column=col).border = BORDER
+    ws.row_dimensions[8].height = 20
+
+    resumen = [
+        ("Dispositivos dados de alta", diag["total"], None),
+        ("Responden", diag["responden"], COLOR_EST_OK),
+        ("No responden", diag["no_responden"], COLOR_EST_FALLO),
+        ("Sin lectura (la red no responde)", diag["sin_lectura"], COLOR_EST_REPOSO),
+        ("En reposo (pulsadores a pila)", diag["en_reposo"], COLOR_EST_REPOSO),
+        ("Con aviso del equipo", diag["con_aviso"], COLOR_EST_AVISO),
+    ]
+    for i, (label, value, color) in enumerate(resumen):
+        row = 9 + i
+        _dato(row, label, value)
+        if color:
+            ws.cell(row=row, column=4).fill = PatternFill("solid", fgColor=color)
+
+    # Nota al pie del resumen: por qué "En reposo" no es una avería
+    nota = ws.cell(
+        row=15, column=1,
+        value="Los pulsadores a pila duermen y solo despiertan al pulsarlos: "
+              "que no respondan es normal, no es una avería.",
+    )
+    ws.merge_cells("A15:K15")
+    nota.font = Font(size=9, italic=True, color=COLOR_TXT_REPOSO, name="Calibri")
+    nota.alignment = Alignment(vertical="center")
+    ws.row_dimensions[15].height = 16
+
+    hdr = 17
+    columns = ["ID", "Nombre", "Categoría", "Grupo", "Estado", "Aviso",
+               "Encendido", "Nivel", "Escena activa", "Firmware", "Dirección MAC"]
+    _write_header_row(ws, hdr, columns)
+    ws.row_dimensions[hdr].height = 30
+
+    _ESTADO_COLORES = {
+        EST_RESPONDE:    (COLOR_EST_OK,     COLOR_TXT_OK),
+        EST_NO_RESPONDE: (COLOR_EST_FALLO,  COLOR_TXT_FALLO),
+        EST_REPOSO:      (COLOR_EST_REPOSO, COLOR_TXT_REPOSO),
+        EST_SIN_LECTURA: (COLOR_EST_REPOSO, COLOR_TXT_REPOSO),
+    }
+
+    for i, d in enumerate(diag["dispositivos"]):
+        row = hdr + 1 + i
+        values = [
+            d["id"], d["name"], d["category"], d["group"], d["estado"],
+            d["aviso"] or "-", d["encendido"], d["nivel"], d["escena"],
+            d["firmware"], d["address"],
+        ]
+        _write_data_row(ws, row, values, alternate=(row % 2 == 0))
+        ws.row_dimensions[row].height = 18
+
+        bg, fg = _ESTADO_COLORES[d["estado"]]
+        estado_cell = ws.cell(row=row, column=5)
+        estado_cell.fill = PatternFill("solid", fgColor=bg)
+        estado_cell.font = Font(bold=True, size=10, color=fg, name="Calibri")
+        estado_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        if d["aviso"]:
+            aviso_cell = ws.cell(row=row, column=6)
+            aviso_cell.fill = PatternFill("solid", fgColor=COLOR_EST_AVISO)
+            aviso_cell.font = Font(size=10, color=COLOR_TXT_AVISO, name="Calibri")
+
+    if diag["dispositivos"]:
+        last = hdr + len(diag["dispositivos"])
+        # Filtro para aislar rápido lo que falla al hablar con el cliente
+        ws.auto_filter.ref = f"A{hdr}:K{last}"
+        _freeze(ws, f"A{hdr + 1}")
+    else:
+        ws.cell(row=hdr + 1, column=1, value="La red no tiene dispositivos dados de alta.")
 
 
 def _sheet_elementos(wb: Workbook, network: dict, state: dict, fixtures: dict) -> None:
@@ -811,9 +1141,12 @@ _CATEGORY_MARKER_COLORS = {
 }
 
 
-def _marker_color(category: str) -> tuple[int, int, int]:
-    hex_color = _CATEGORY_MARKER_COLORS.get(category, COLOR_COVER_DARK)
+def _rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _marker_color(category: str) -> tuple[int, int, int]:
+    return _rgb(_CATEGORY_MARKER_COLORS.get(category, COLOR_COVER_DARK))
 
 
 def _marker_font(size: int) -> ImageFont.ImageFont:
@@ -870,12 +1203,28 @@ def _draw_marker(canvas: Image.Image, draw: ImageDraw.ImageDraw,
         draw.text((cx, cy), str(number), font=font, fill=(255, 255, 255), anchor="mm")
 
 
-def _compose_plano(photo: dict, units_by_id: dict, images_dir: Path
-                   ) -> tuple[io.BytesIO, int, int, list[tuple]] | None:
+_LEYENDA_UNIDADES = ["Nº", "ID", "Nombre", "Categoría", "Grupo"]
+
+
+def _fila_leyenda_unidad(number: int, unit_id, units_by_id: dict,
+                         group_map: dict) -> list:
+    """Fila de leyenda para un elemento de la red colocado sobre un plano."""
+    unit = units_by_id.get(unit_id)
+    gid = unit.get("groupId", 0) if unit else 0
+    return [
+        number,
+        unit_id,
+        unit.get("name", "-") if unit else f"Unidad {unit_id}",
+        _classify_unit(unit) if unit else "Desconocido",
+        group_map.get(gid, "-") if gid else "-",
+    ]
+
+
+def _compose_plano(photo: dict, units_by_id: dict, group_map: dict, images_dir: Path
+                   ) -> tuple[io.BytesIO, int, int, list[str], list[list]] | None:
     """
     Dibuja los marcadores de la foto sobre la imagen de la galería.
-    Devuelve (png_buffer, ancho_px, alto_px, leyenda) o None si no hay imagen.
-    Leyenda: [(nº, id_unidad, nombre, categoría), ...].
+    Devuelve (png_buffer, ancho_px, alto_px, cabeceras, filas) o None si no hay imagen.
     """
     img_id = photo.get("image")
     img_path = images_dir / f"{img_id}.png" if img_id else None
@@ -900,11 +1249,10 @@ def _compose_plano(photo: dict, units_by_id: dict, images_dir: Path
         key=lambda c: (c.get("y", 0), c.get("x", 0)),
     )
 
-    legend: list[tuple] = []
+    filas: list[list] = []
     for number, ctrl in enumerate(controls, start=1):
         unit = units_by_id.get(ctrl["unit"])
         category = _classify_unit(unit) if unit else "Desconocido"
-        name = unit.get("name", "-") if unit else f"Unidad {ctrl['unit']}"
 
         cx = int((ctrl.get("x", 0) + ctrl.get("width", 0) / 2) * W)
         cy = int((ctrl.get("y", 0) + ctrl.get("height", 0) / 2) * H)
@@ -918,12 +1266,12 @@ def _compose_plano(photo: dict, units_by_id: dict, images_dir: Path
 
         _draw_marker(base, draw, cx, cy, diameter, number,
                      _marker_color(category), icon_path)
-        legend.append((number, ctrl["unit"], name, category))
+        filas.append(_fila_leyenda_unidad(number, ctrl["unit"], units_by_id, group_map))
 
     buffer = io.BytesIO()
     base.convert("RGB").save(buffer, format="PNG")
     buffer.seek(0)
-    return buffer, W, H, legend
+    return buffer, W, H, _LEYENDA_UNIDADES, filas
 
 
 def _manual_marker_diameter(w: int, h: int, n_markers: int) -> int:
@@ -937,13 +1285,13 @@ def _manual_marker_diameter(w: int, h: int, n_markers: int) -> int:
     return int(max(24, min(56, d)))
 
 
-def _compose_plano_manual(plan: dict, units_by_id: dict,
+def _compose_plano_manual(plan: dict, units_by_id: dict, group_map: dict,
                           images_dir: Path | None
-                          ) -> tuple[io.BytesIO, int, int, list[tuple]] | None:
+                          ) -> tuple[io.BytesIO, int, int, list[str], list[list]] | None:
     """
     Dibuja los marcadores de un plano manual (subido en la web).
     plan: {"name", "path", "markers": {unit_id: {"x", "y"}}}.
-    Devuelve (png_buffer, ancho_px, alto_px, leyenda) o None si no hay imagen.
+    Devuelve (png_buffer, ancho_px, alto_px, cabeceras, filas) o None si no hay imagen.
     """
     try:
         base = Image.open(plan["path"])
@@ -964,7 +1312,7 @@ def _compose_plano_manual(plan: dict, units_by_id: dict,
     )
     diameter = _manual_marker_diameter(W, H, len(markers))
 
-    legend: list[tuple] = []
+    filas: list[list] = []
     for number, (uid, pos) in enumerate(markers, start=1):
         try:
             unit_id = int(uid)
@@ -972,7 +1320,6 @@ def _compose_plano_manual(plan: dict, units_by_id: dict,
             continue
         unit = units_by_id.get(unit_id)
         category = _classify_unit(unit) if unit else "Desconocido"
-        name = unit.get("name", "-") if unit else f"Unidad {unit_id}"
 
         cx = max(0, min(W - 1, int(pos.get("x", 0) * W)))
         cy = max(0, min(H - 1, int(pos.get("y", 0) * H)))
@@ -984,42 +1331,166 @@ def _compose_plano_manual(plan: dict, units_by_id: dict,
 
         _draw_marker(base, draw, cx, cy, diameter, number,
                      _marker_color(category), icon_path)
-        legend.append((number, unit_id, name, category))
+        filas.append(_fila_leyenda_unidad(number, unit_id, units_by_id, group_map))
 
     buffer = io.BytesIO()
     base.convert("RGB").save(buffer, format="PNG")
     buffer.seek(0)
-    return buffer, W, H, legend
+    return buffer, W, H, _LEYENDA_UNIDADES, filas
+
+
+_LEYENDA_COBERTURA = ["Nº", "Nodo", "Unidad asociada", "Categoría", "Nota de montaje"]
+
+_SIN_ASOCIAR = "— sin asociar —"
+
+
+def _compose_plano_cobertura(plan: dict, units_by_id: dict,
+                             images_dir: Path | None
+                             ) -> tuple[io.BytesIO, int, int, list[str], list[list]] | None:
+    """
+    Dibuja un plano importado del Simulador de Cobertura: las paredes del modelo
+    de propagación y los nodos simulados, numerados.
+
+    El proyecto .casambi no guarda el mapa de calor —lo calcula el motor Swift en
+    vivo y nunca se serializa—, así que aquí se documenta la *planificación*: qué
+    se simuló, dónde y con qué paredes. Para el mapa de calor en sí, se exporta
+    la imagen desde el simulador y se sube como un plano normal.
+    """
+    cobertura = plan.get("cobertura") or {}
+    try:
+        base = Image.open(plan["path"])
+    except (OSError, KeyError):
+        return None
+    base = ImageOps.exif_transpose(base).convert("RGBA")
+
+    scale = min(1.0, PLANO_MAX_W / base.width, PLANO_MAX_H / base.height)
+    if scale < 1.0:
+        base = base.resize((int(base.width * scale), int(base.height * scale)),
+                           Image.LANCZOS)
+    W, H = base.size
+
+    # Paredes primero, para que los nodos queden por encima. Van en una capa
+    # translúcida: son contexto del cálculo, no deben tapar el plano de obra.
+    paredes = cobertura.get("paredes") or []
+    huecos = cobertura.get("huecos") or []
+    if paredes or huecos:
+        grosor = max(2, round(max(W, H) / 400))
+        capa = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        cdraw = ImageDraw.Draw(capa)
+        # Huecos de losa debajo de las paredes: donde el nivel no tiene piso.
+        for hueco in huecos:
+            puntos = [(x * W, y * H) for x, y in hueco.get("puntos") or []]
+            if len(puntos) >= 3:
+                cdraw.polygon(puntos, fill=_rgb(COLOR_COB_HUECO) + (45,),
+                              outline=_rgb(COLOR_COB_HUECO) + (200,))
+        for pared in paredes:
+            cdraw.line(
+                (pared.get("x1", 0) * W, pared.get("y1", 0) * H,
+                 pared.get("x2", 0) * W, pared.get("y2", 0) * H),
+                fill=_rgb(COLOR_COB_PARED) + (170,), width=grosor,
+            )
+        base.alpha_composite(capa)
+
+    draw = ImageDraw.Draw(base)
+    nodos = sorted(cobertura.get("nodos") or [],
+                   key=lambda n: (n.get("y", 0), n.get("x", 0)))
+    diameter = _manual_marker_diameter(W, H, len(nodos))
+
+    filas: list[list] = []
+    for number, nodo in enumerate(nodos, start=1):
+        unit = units_by_id.get(nodo.get("unit_id"))
+        if unit is not None:
+            category = _classify_unit(unit)
+            color = _marker_color(category)
+        else:
+            # Sin unidad asociada el nodo sigue siendo una posición propuesta;
+            # el color lo distingue de lo que ya está instalado.
+            category = "-"
+            color = (_marker_color("Gateway") if nodo.get("gateway")
+                     else _rgb(COLOR_COB_NODO))
+
+        cx = max(0, min(W - 1, int(nodo.get("x", 0) * W)))
+        cy = max(0, min(H - 1, int(nodo.get("y", 0) * H)))
+
+        icon_id = unit.get("image") if unit else None
+        icon_path = images_dir / f"{icon_id}.png" if (icon_id and images_dir) else None
+        if icon_path is not None and not icon_path.exists():
+            icon_path = None
+
+        _draw_marker(base, draw, cx, cy, diameter, number, color, icon_path)
+
+        etiqueta = nodo.get("label") or "?"
+        if nodo.get("modelo"):
+            etiqueta += f" ({nodo['modelo']})"
+        if nodo.get("gateway"):
+            etiqueta += " · gateway"
+        filas.append([
+            number,
+            etiqueta,
+            unit.get("name", "-") if unit else _SIN_ASOCIAR,
+            category,
+            nodo.get("nota") or "-",
+        ])
+
+    buffer = io.BytesIO()
+    base.convert("RGB").save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer, W, H, _LEYENDA_COBERTURA, filas
+
+
+def _subtitulo_cobertura(plan: dict) -> str:
+    """Una línea con lo que hace falta para leer el plano con criterio."""
+    c = plan.get("cobertura") or {}
+    partes = []
+    if c.get("cliente"):
+        partes.append(f"Cliente: {c['cliente']}")
+    if c.get("nivel"):
+        partes.append(f"Nivel: {c['nivel']} (de {c.get('niveles') or '?'})")
+    if c.get("ancho_m") and c.get("alto_m"):
+        partes.append(f"{c['ancho_m']} × {c['alto_m']} m")
+    if c.get("n") is not None:
+        partes.append(f"exponente n = {c['n']}")
+    partes.append(f"{len(c.get('paredes') or [])} pared(es) modeladas")
+    if c.get("huecos"):
+        partes.append(f"{len(c['huecos'])} hueco(s) de losa")
+    partes.append("simulación estimativa (±10 dB), sin mapa de calor")
+    return " · ".join(partes)
 
 
 def _write_plano_section(ws, row: int, title: str, composed: tuple,
-                         units_by_id: dict, group_map: dict) -> int:
+                         subtitle: str = "") -> int:
     """Escribe un plano (título + imagen + leyenda) y devuelve la fila siguiente."""
-    buffer, width_px, height_px, legend = composed
+    buffer, width_px, height_px, headers, filas = composed
 
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
-    cell = ws.cell(row=row, column=1, value=f"PLANO: {title}")
+    cell = ws.cell(row=row, column=1, value=title)
     cell.font = Font(bold=True, size=13, color=COLOR_HEADER_FG, name="Calibri")
     cell.fill = _header_fill()
     cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     ws.row_dimensions[row].height = 26
-    row += 2
+    row += 1
+
+    if subtitle:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        sub = ws.cell(row=row, column=1, value=subtitle)
+        sub.font = Font(italic=True, size=9, color=COLOR_COB_NOTA, name="Calibri")
+        sub.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    row += 1
 
     img = XLImage(buffer)
     img.width, img.height = width_px, height_px
     ws.add_image(img, f"A{row}")
     row += -(-height_px // ROW_PX) + 2  # ceil + margen
 
-    _write_header_row(ws, row, ["Nº", "ID", "Nombre", "Categoría", "Grupo"])
-    row += 1
-    for i, (number, unit_id, name, category) in enumerate(legend):
-        unit = units_by_id.get(unit_id, {})
-        gid = unit.get("groupId", 0)
-        group = group_map.get(gid, "-") if gid else "-"
-        _write_data_row(ws, row, [number, unit_id, name, category, group],
-                        alternate=(i % 2 == 1))
-        ws.row_dimensions[row].height = 18
+    # Sin marcadores no hay nada que numerar: una cabecera sola confunde más
+    # que ayuda, así que la leyenda solo se escribe si tiene filas.
+    if filas:
+        _write_header_row(ws, row, headers)
         row += 1
+        for i, valores in enumerate(filas):
+            _write_data_row(ws, row, valores, alternate=(i % 2 == 1))
+            ws.row_dimensions[row].height = 18
+            row += 1
 
     return row + 2  # separación entre planos
 
@@ -1030,6 +1501,10 @@ def _sheet_planos(wb: Workbook, network: dict, images_dir: Path | None,
     Una sección por cada foto de la galería de Casambi con elementos colocados,
     seguida de los planos manuales subidos en la web: la imagen con marcadores
     numerados y su leyenda debajo.
+
+    Los planos importados del Simulador de Cobertura van al final, con su propia
+    leyenda de nodos: son planificación, no inventario, y mezclarlos con lo
+    instalado haría leer una propuesta como si fuera un hecho.
     """
     ws = wb.create_sheet("Planos")
     ws.sheet_view.showGridLines = False
@@ -1043,7 +1518,7 @@ def _sheet_planos(wb: Workbook, network: dict, images_dir: Path | None,
     units_by_id = {u.get("id"): u for u in network.get("units", [])}
     group_map = {g["id"]: g.get("name", "-") for g in network.get("groups", [])}
 
-    sections: list[tuple[str, tuple]] = []
+    sections: list[tuple[str, tuple, str]] = []
 
     if images_dir is not None:
         photos = [
@@ -1051,14 +1526,22 @@ def _sheet_planos(wb: Workbook, network: dict, images_dir: Path | None,
             if p.get("controls") and p.get("image")
         ]
         for idx, photo in enumerate(photos, start=1):
-            composed = _compose_plano(photo, units_by_id, images_dir)
+            composed = _compose_plano(photo, units_by_id, group_map, images_dir)
             if composed is not None:
-                sections.append((photo.get("name") or f"Foto {idx}", composed))
+                nombre = photo.get("name") or f"Foto {idx}"
+                sections.append((f"PLANO: {nombre}", composed, ""))
 
-    for plan in manual_planos or []:
-        composed = _compose_plano_manual(plan, units_by_id, images_dir)
+    planos = list(manual_planos or [])
+    for plan in (p for p in planos if not p.get("cobertura")):
+        composed = _compose_plano_manual(plan, units_by_id, group_map, images_dir)
         if composed is not None:
-            sections.append((plan.get("name") or "Plano", composed))
+            sections.append((f"PLANO: {plan.get('name') or 'Plano'}", composed, ""))
+
+    for plan in (p for p in planos if p.get("cobertura")):
+        composed = _compose_plano_cobertura(plan, units_by_id, images_dir)
+        if composed is not None:
+            titulo = f"COBERTURA SIMULADA: {plan.get('name') or 'Simulación'}"
+            sections.append((titulo, composed, _subtitulo_cobertura(plan)))
 
     if not sections:
         ws.cell(row=2, column=1,
@@ -1067,8 +1550,8 @@ def _sheet_planos(wb: Workbook, network: dict, images_dir: Path | None,
         return
 
     row = 1
-    for title, composed in sections:
-        row = _write_plano_section(ws, row, title, composed, units_by_id, group_map)
+    for title, composed, subtitle in sections:
+        row = _write_plano_section(ws, row, title, composed, subtitle)
 
 
 def _sheet_horarios(wb: Workbook, schedules: list | None = None) -> None:
@@ -1121,7 +1604,8 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     sensor_config: {unit_id: {"modo", "escena_presencia", "escena_ausencia"}} — sensores anotados.
     schedules: lista de horarios documentados por el usuario.
     images_dir: carpeta con las imágenes de la red (<image_id>.png) para la hoja Planos.
-    manual_planos: [{"name", "path", "markers"}] — planos subidos manualmente.
+    manual_planos: [{"name", "path", "markers", "cobertura"}] — planos subidos
+        manualmente; "cobertura" solo lo traen los importados del simulador.
     Returns the Path of the generated file.
     """
     if fixtures is None:
@@ -1131,6 +1615,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
 
     _sheet_portada(wb, network, state)
     _sheet_red(wb, network, state)
+    _sheet_conectividad(wb, network, state)
     _sheet_elementos(wb, network, state, fixtures)
     _sheet_luminarias(wb, network, state, fixtures)
     _sheet_pulsadores(wb, network, state, button_config=button_config)

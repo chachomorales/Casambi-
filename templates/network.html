@@ -25,7 +25,13 @@
     {% if conexion.nivel == 'online' %}
       <b>Red en línea</b>
       {%- if conexion.gateway %} — gateway «{{ conexion.gateway }}» conectado{% endif %}.
-      {{ conexion.online }} de {{ conexion.total }} dispositivos responden.
+      {{ conexion.responden }} de {{ conexion.total }} dispositivos responden{% if conexion.en_reposo %},
+      {{ conexion.en_reposo }} en reposo{% endif %}.
+      {%- if conexion.no_responden %}
+      <span class="conexion-aviso">
+        {{ conexion.no_responden }} no dan señal — el detalle está en la pestaña «Conectividad».
+      </span>
+      {%- endif %}
       <span class="conexion-aviso">
         Cuidado: capturar niveles activa escenas de verdad y cambiará las luces.
       </span>
@@ -60,6 +66,12 @@
 <!-- Pestañas -->
 <nav class="tabs">
   <button class="tab active" data-tab="elementos">Elementos <span class="badge">{{ elementos|length }}</span></button>
+  <button class="tab" data-tab="conectividad">Conectividad
+    <span class="badge">{{ conexion.total }}</span>
+    {%- if conexion.no_responden %}
+    <span class="badge badge-alerta">{{ conexion.no_responden }} sin señal</span>
+    {%- endif %}
+  </button>
   <button class="tab" data-tab="luminarias">Luminarias <span class="badge">{{ luminarias|length }}</span></button>
   <button class="tab" data-tab="pulsadores">Pulsadores <span class="badge">{{ pulsadores|length }}</span></button>
   <button class="tab" data-tab="sensores">Sensores <span class="badge">{{ sensores|length }}</span></button>
@@ -88,6 +100,53 @@
         </tr>
         {% else %}
         <tr><td colspan="8" class="empty">No hay elementos en esta red.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Conectividad: quién responde y quién no, para reportar problemas -->
+<section class="tab-panel" id="panel-conectividad">
+  <p class="diag-veredicto diag-{{ conexion.nivel }}{% if conexion.no_responden %} diag-con-fallos{% endif %}">
+    {{ conexion.veredicto }}
+  </p>
+
+  <div class="diag-chips">
+    <span class="diag-chip diag-chip-ok"><b>{{ conexion.responden }}</b> responden</span>
+    <span class="diag-chip diag-chip-fallo"><b>{{ conexion.no_responden }}</b> no responden</span>
+    {%- if conexion.sin_lectura %}
+    <span class="diag-chip diag-chip-neutro"><b>{{ conexion.sin_lectura }}</b> sin lectura</span>
+    {%- endif %}
+    {%- if conexion.en_reposo %}
+    <span class="diag-chip diag-chip-neutro" title="Los pulsadores a pila duermen: que no respondan es normal."><b>{{ conexion.en_reposo }}</b> en reposo</span>
+    {%- endif %}
+    {%- if conexion.con_aviso %}
+    <span class="diag-chip diag-chip-aviso"><b>{{ conexion.con_aviso }}</b> con aviso</span>
+    {%- endif %}
+  </div>
+
+  <input type="search" class="table-search" placeholder="Buscar en conectividad…" data-target="tbl-conectividad">
+  <div class="table-wrap">
+    <table id="tbl-conectividad">
+      <thead><tr>
+        <th>ID</th><th>Nombre</th><th>Categoría</th><th>Grupo</th><th>Estado</th>
+        <th>Aviso</th><th>Encendido</th><th>Nivel</th><th>Escena activa</th>
+        <th>Firmware</th><th>Dirección MAC</th>
+      </tr></thead>
+      <tbody>
+        {% for d in conexion.dispositivos %}
+        <tr class="{% if d.problema %}fila-fallo{% elif d.aviso %}fila-aviso{% endif %}">
+          <td>{{ d.id }}</td><td>{{ d.name }}</td>
+          <td><span class="pill pill-{{ d.category|lower|replace(' ', '')|replace('/', '') }}">{{ d.category }}</span></td>
+          <td>{{ d.group }}</td>
+          <td><span class="estado estado-{{ d.estado|lower|replace(' ', '-') }}">{{ d.estado }}</span></td>
+          <td>{{ d.aviso or '—' }}</td>
+          <td>{{ d.encendido }}</td><td>{{ d.nivel }}</td><td>{{ d.escena }}</td>
+          <td>{{ d.firmware }}</td><td class="mono">{{ d.address }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" class="empty">La red no tiene dispositivos dados de alta.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -389,7 +448,7 @@
           enctype="multipart/form-data" class="plano-upload-form">
       <input type="text" name="name" class="plano-name-input"
              placeholder="Nombre del plano (ej. Piso 1)">
-      <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png" required>
+      <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.casambi,.json" required>
       <label class="plano-page-label" title="Página a usar (solo para PDF)">
         Página <input type="number" name="page" min="1" value="1" class="plano-page-input">
       </label>
@@ -399,14 +458,31 @@
       Sube un plano en PDF, JPG o PNG; luego elige un elemento y haz clic sobre el plano
       para colocarlo (arrástralo para moverlo). Los planos salen en la hoja "Planos" del
       Excel junto con la galería de Casambi.
+      <br>
+      También puedes subir un proyecto <b>.casambi</b> del Simulador de Cobertura: se
+      importan el plano, los nodos, las paredes y los huecos de losa, y si tiene varios
+      niveles cada uno queda como un plano aparte. El mapa de calor no viaja en el
+      proyecto — si lo quieres en el informe, expórtalo aparte desde el simulador
+      (⇧⌘E) y súbelo como una imagen más.
     </span>
   </div>
 
   {% for p in planos %}
-  <div class="plano-block" data-plano="{{ p.id }}">
+  {% set cob = p.cobertura if p.origen == 'cobertura' else None %}
+  <div class="plano-block{% if cob %} plano-cobertura{% endif %}" data-plano="{{ p.id }}"
+       {% if cob %}data-cobertura="1"{% endif %}>
     <div class="plano-head">
       <input type="text" class="plano-rename" value="{{ p.name }}"
              title="Nombre del plano (se guarda al salir del campo)">
+      {% if cob %}
+      <span class="plano-tag" title="Importado del Simulador de Cobertura">📡 Cobertura</span>
+      <span class="plano-count hint">
+        {% if cob.nivel %}{{ cob.nivel }} · {% endif %}
+        {{ cob.nodos|length }} nodo(s) · {{ cob.paredes|length }} pared(es) ·
+        {% if cob.huecos %}{{ cob.huecos|length }} hueco(s) de losa · {% endif %}
+        {{ cob.ancho_m }} × {{ cob.alto_m }} m
+      </span>
+      {% else %}
       <select class="plano-element-select">
         <option value="">— Elige un elemento y haz clic en el plano —</option>
         {% for e in elementos %}
@@ -415,6 +491,7 @@
       </select>
       <button class="plano-marker-del" disabled>✕ Quitar del plano</button>
       <span class="plano-count hint">{{ p.markers|length }} elemento(s) colocado(s)</span>
+      {% endif %}
       <div class="plano-zoom" title="Zoom (también Ctrl + rueda del mouse sobre el plano)">
         <button class="zoom-out">−</button>
         <span class="zoom-level">100%</span>
@@ -427,14 +504,73 @@
       <div class="plano-canvas">
         <img src="{{ url_for('plano_image', network_id=network_id, plano_id=p.id) }}"
              alt="{{ p.name }}" draggable="false">
+        {% if cob %}
+        {# Paredes del modelo de propagación: contexto de por qué el nodo va ahí. #}
+        <svg class="plano-paredes" viewBox="0 0 100 100" preserveAspectRatio="none">
+          {% for w in cob.paredes %}
+          <line x1="{{ (w.x1 * 100)|round(3) }}" y1="{{ (w.y1 * 100)|round(3) }}"
+                x2="{{ (w.x2 * 100)|round(3) }}" y2="{{ (w.y2 * 100)|round(3) }}"
+                {% if w.perdida_db is not none %}
+                data-perdida="{{ w.perdida_db }}"><title>{{ w.perdida_db }} dB</title></line>
+                {% else %}></line>{% endif %}
+          {% endfor %}
+          {# Huecos de losa: donde este nivel no tiene piso. #}
+          {% for h in cob.huecos or [] %}
+          <polygon class="plano-hueco"
+                   points="{% for pt in h.puntos %}{{ (pt[0] * 100)|round(3) }},{{ (pt[1] * 100)|round(3) }} {% endfor %}"><title>{{ h.nombre }}</title></polygon>
+          {% endfor %}
+        </svg>
+        {% for n in cob.nodos %}
+        <div class="plano-nodo{% if n.gateway %} pn-gateway{% endif %}{% if n.unit_id %} pn-asociado{% endif %}"
+             data-nodo="{{ n.id }}"
+             style="left: {{ (n.x * 100)|round(3) }}%; top: {{ (n.y * 100)|round(3) }}%"
+             title="{{ n.label }}{% if n.gateway %} · gateway{% endif %}{% if n.nota %} — {{ n.nota }}{% endif %}">{{ n.label }}</div>
+        {% endfor %}
+        {% else %}
         {% for uid, pos in p.markers.items() %}
         <div class="plano-marker pm-{{ elementos_map.get(uid, {}).get('cat', '') }}"
              data-unit="{{ uid }}"
              style="left: {{ (pos.x * 100)|round(3) }}%; top: {{ (pos.y * 100)|round(3) }}%"
              title="{{ elementos_map.get(uid, {}).get('name', 'ID ' + uid) }}">{{ uid }}</div>
         {% endfor %}
+        {% endif %}
       </div>
     </div>
+
+    {% if cob %}
+    <table class="plano-nodos-tabla">
+      <thead>
+        <tr><th>Nodo</th><th>Montaje</th><th>Unidad real asociada</th></tr>
+      </thead>
+      <tbody>
+        {% for n in cob.nodos %}
+        <tr data-nodo-fila="{{ n.id }}">
+          <td>
+            <b>{{ n.label }}</b>
+            {% if n.modelo %}<span class="hint">{{ n.modelo }}</span>{% endif %}
+            {% if n.gateway %}<span class="nodo-badge">gateway</span>{% endif %}
+            {% if n.fijo %}<span class="nodo-badge" title="Posición fija en el simulador">🔒</span>{% endif %}
+          </td>
+          <td class="nodo-nota">{{ n.nota or '—' }}</td>
+          <td>
+            <select class="nodo-unit-select" data-nodo="{{ n.id }}">
+              <option value="">— sin asociar —</option>
+              {% for e in elementos %}
+              <option value="{{ e.id }}" {% if n.unit_id == e.id %}selected{% endif %}>
+                {{ e.id }} — {{ e.name }} ({{ e.category }})
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint plano-cobertura-nota">
+      Simulación estimativa (±10 dB), no sustituye la medición en sitio. El proyecto
+      no guarda el mapa de calor: en el Excel salen el plano, los nodos y las paredes.
+    </p>
+    {% endif %}
   </div>
   {% else %}
   <p class="empty">No hay planos subidos para esta red. Usa "⬆ Subir plano".</p>
@@ -715,6 +851,10 @@
     const select   = block.querySelector('.plano-element-select');
     const delBtn   = block.querySelector('.plano-marker-del');
     const countEl  = block.querySelector('.plano-count');
+    // Los nodos de un plano de cobertura los sitúa el simulador, no el usuario:
+    // ese plano comparte zoom, renombrado y borrado, pero no el editor de
+    // marcadores (de hecho no tiene ni desplegable de elementos ni contador).
+    const esCobertura = block.dataset.cobertura === '1';
 
     // ── Zoom: el plano crece, los marcadores conservan su tamaño en pantalla ──
     const zoomLabel = block.querySelector('.zoom-level');
@@ -793,6 +933,7 @@
 
     // Clic en el plano: coloca (o mueve) el elemento elegido
     canvas.addEventListener('click', async ev => {
+      if (esCobertura) return;
       if (ev.target.classList.contains('plano-marker')) return;
       const unitId = select.value;
       if (!unitId) return;
@@ -810,6 +951,7 @@
     // Clic en un marcador: lo selecciona en el desplegable
     // Arrastre de un marcador: lo mueve y guarda al soltar
     canvas.addEventListener('pointerdown', ev => {
+      if (esCobertura) return;
       const marker = ev.target.closest('.plano-marker');
       if (!marker) return;
       ev.preventDefault();
@@ -839,23 +981,56 @@
       document.addEventListener('pointerup', onUp);
     });
 
-    select.addEventListener('change', () => {
-      selectMarker(select.value);
-      syncDelBtn();
-      const m = select.value && markerOf(select.value);
-      if (m) m.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (!esCobertura) {
+      select.addEventListener('change', () => {
+        selectMarker(select.value);
+        syncDelBtn();
+        const m = select.value && markerOf(select.value);
+        if (m) m.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+
+      delBtn.addEventListener('click', async () => {
+        const unitId = select.value;
+        const m = unitId && markerOf(unitId);
+        if (!m) return;
+        try {
+          await planoPost({ action: 'marker_remove', plano_id: planoId, unit_id: unitId });
+          m.remove();
+          updateCount();
+          syncDelBtn();
+        } catch (e) { alert('No se pudo quitar el marcador: ' + e.message); }
+      });
+    }
+
+    // Asociación nodo simulado → unidad instalada. El marcador del plano cambia
+    // de color al asociarse, para ver de un vistazo lo que queda por emparejar.
+    block.querySelectorAll('.nodo-unit-select').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const nodoId = sel.dataset.nodo;
+        const previo = sel.dataset.previo || '';
+        try {
+          await planoPost({ action: 'nodo_unit', plano_id: planoId,
+                            nodo_id: nodoId, unit_id: sel.value });
+          sel.dataset.previo = sel.value;
+          const marcador = canvas.querySelector(`.plano-nodo[data-nodo="${nodoId}"]`);
+          if (marcador) marcador.classList.toggle('pn-asociado', !!sel.value);
+        } catch (e) {
+          sel.value = previo;
+          alert('No se pudo asociar el nodo: ' + e.message);
+        }
+      });
+      sel.dataset.previo = sel.value;
     });
 
-    delBtn.addEventListener('click', async () => {
-      const unitId = select.value;
-      const m = unitId && markerOf(unitId);
-      if (!m) return;
-      try {
-        await planoPost({ action: 'marker_remove', plano_id: planoId, unit_id: unitId });
-        m.remove();
-        updateCount();
-        syncDelBtn();
-      } catch (e) { alert('No se pudo quitar el marcador: ' + e.message); }
+    // Clic en un nodo del plano: lleva a su fila en la tabla de asociación.
+    canvas.querySelectorAll('.plano-nodo').forEach(nodo => {
+      nodo.addEventListener('click', () => {
+        const fila = block.querySelector(`[data-nodo-fila="${nodo.dataset.nodo}"]`);
+        if (!fila) return;
+        block.querySelectorAll('.nodo-activo').forEach(f => f.classList.remove('nodo-activo'));
+        fila.classList.add('nodo-activo');
+        fila.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
     });
 
     block.querySelector('.plano-rename').addEventListener('change', ev => {
@@ -871,7 +1046,7 @@
       } catch (e) { alert('No se pudo eliminar el plano: ' + e.message); }
     });
 
-    syncDelBtn();
+    if (!esCobertura) syncDelBtn();
   });
 
   // Capturar niveles: activa la escena real y lee el dimLevel de las luminarias
