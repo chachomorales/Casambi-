@@ -1,0 +1,19 @@
+# El contexto de build solo necesita el código; todo lo demás son cientos de
+# megas que ralentizan cada `docker build`.
+.venv/
+.git/
+__pycache__/
+*.pyc
+tests/
+data/
+reportes/
+build/
+dist/
+.env
+.DS_Store
+CASAMBI.icns
+CASAMBI.spec
+desktop.py
+main.py
+run*.sh
+run*.bat

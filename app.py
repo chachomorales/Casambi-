@@ -37,6 +37,7 @@ from flask import (
 )
 
 import cobertura
+import config
 import credentials
 from casambi_api import CasambiAPIError, CasambiClient
 from report import (
@@ -53,7 +54,11 @@ from report import (
 _HOME = Path(os.environ["CASAMBI_HOME"]) if os.environ.get("CASAMBI_HOME") else Path(__file__).parent
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+
+# Clave de sesión, límites de subida y flags de cookie salen de config, que los
+# decide según CASAMBI_MODE: en el servidor la clave tiene que ser estable
+# (cada reinicio invalidaría los tokens CSRF), en el escritorio da igual.
+config.aplicar(app)
 
 LOGOS_DIR = Path(__file__).parent / "logos"
 REPORTS_DIR = _HOME / "reportes"

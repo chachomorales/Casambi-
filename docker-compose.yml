@@ -1,0 +1,30 @@
+# Dos servicios: la app y el túnel. Ningún puerto queda expuesto a internet —
+# cloudflared abre una conexión saliente y Cloudflare Access hace de puerta.
+
+services:
+  casambi:
+    build: .
+    restart: unless-stopped
+    # Solo en loopback, para depurar desde el propio servidor con curl o un
+    # túnel SSH. Quien publica la app es cloudflared, por la red interna.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - casambi-data:/data
+    environment:
+      CASAMBI_SECRET_KEY: ${CASAMBI_SECRET_KEY:?falta en .env — sin ella no se descifran las credenciales}
+      CASAMBI_ACCESS_TEAM_DOMAIN: ${CASAMBI_ACCESS_TEAM_DOMAIN:?falta en .env}
+      CASAMBI_ACCESS_AUD: ${CASAMBI_ACCESS_AUD:?falta en .env}
+      CASAMBI_ACCESS_EMAILS: ${CASAMBI_ACCESS_EMAILS:-}
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?falta en .env — se copia del panel de Cloudflare Zero Trust}
+    depends_on:
+      - casambi
+
+volumes:
+  casambi-data:

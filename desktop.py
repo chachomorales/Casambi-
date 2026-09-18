@@ -60,6 +60,9 @@ def _wait_for_server(port: int, timeout: float = 15.0) -> None:
 def main() -> None:
     home = _prepare_home()
     os.environ["CASAMBI_HOME"] = str(home)
+    # La misma base de código sirve la web; este es el interruptor que le dice a
+    # config.py que aquí no hay Cloudflare Access ni cookies sobre HTTPS.
+    os.environ.setdefault("CASAMBI_MODE", "desktop")
 
     from app import app  # importar después de fijar CASAMBI_HOME
 
