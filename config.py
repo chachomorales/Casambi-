@@ -34,6 +34,14 @@ ES_ESCRITORIO = MODO == "desktop"
 
 _SECURITY = "/usr/bin/security"
 
+_AYUDA_CLAVE = (
+    "Falta CASAMBI_SECRET_KEY. Genera una con:\n"
+    "    python3 -c \"import base64,os; "
+    "print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"\n"
+    "y guárdala en el gestor de contraseñas de la empresa: sin ella no se "
+    "pueden descifrar las credenciales de una copia de seguridad."
+)
+
 
 def backend_credenciales() -> str:
     """Devuelve 'keychain' o 'encfile'.
@@ -55,8 +63,21 @@ def backend_credenciales() -> str:
     return "encfile"
 
 
+def clave_secreta_persistente() -> bytes:
+    """Clave para cifrar en disco. A diferencia de la de Flask, nunca es efímera.
+
+    Existe aparte porque `clave_secreta()` puede devolver bytes aleatorios en el
+    escritorio, y con una clave distinta en cada arranque el fichero de
+    credenciales quedaría ilegible al siguiente inicio.
+    """
+    bruta = os.environ.get("CASAMBI_SECRET_KEY") or ""
+    if not bruta:
+        raise ConfigError(_AYUDA_CLAVE)
+    return bruta.encode("utf-8")
+
+
 def clave_secreta() -> bytes:
-    """Clave de Flask (cookies de sesión y tokens CSRF) y del fichero cifrado.
+    """Clave de Flask: cookies de sesión y tokens CSRF.
 
     En el servidor tiene que ser estable: con una clave aleatoria por arranque,
     cada reinicio invalidaría todos los tokens CSRF en las pestañas abiertas y,
@@ -69,12 +90,7 @@ def clave_secreta() -> bytes:
         return bruta.encode("utf-8")
     if ES_ESCRITORIO:
         return os.urandom(24)
-    raise ConfigError(
-        "Falta CASAMBI_SECRET_KEY. Genera una con:\n"
-        "    python3 -c \"import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"\n"
-        "y guárdala en el gestor de contraseñas: sin ella no se pueden descifrar "
-        "las credenciales de una copia de seguridad."
-    )
+    raise ConfigError(_AYUDA_CLAVE)
 
 
 # ── Cloudflare Access ─────────────────────────────────────────────────────────
@@ -127,6 +143,10 @@ def validar_arranque() -> None:
     """
     clave_secreta()
     backend = backend_credenciales()
+    if backend == "encfile":
+        # El fichero cifrado exige una clave estable, también en el escritorio
+        # si se fuerza este backend para probarlo.
+        clave_secreta_persistente()
     if ES_ESCRITORIO:
         return
     faltan = []

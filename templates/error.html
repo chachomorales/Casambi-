@@ -1,0 +1,28 @@
+{# Página de error autónoma, sin extender base.html a propósito: la barra
+   lateral lee la lista de cuentas, y si lo que ha fallado es precisamente el
+   almacén de credenciales, renderizarla volvería a estallar. #}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Error — Informes Casambi</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="content">
+    <div class="hero">
+      <img src="{{ url_for('logos', filename='impelsa_logo.png') }}"
+           alt="Impelsa" class="brand-logo">
+      <h1>No se pudo acceder a las credenciales</h1>
+      <div class="flash flash-error">{{ mensaje }}</div>
+      <p>
+        Revisa la configuración del servidor y vuelve a intentarlo. Si el
+        mensaje habla de descifrado, es que la clave del servidor no es la
+        misma con la que se guardaron las cuentas.
+      </p>
+      <a href="{{ url_for('ajustes') }}" class="sidebar-settings">Ir a Ajustes</a>
+    </div>
+  </main>
+</body>
+</html>

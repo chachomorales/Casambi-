@@ -630,6 +630,22 @@ def _build_report_context(network_id: str, data: dict) -> dict:
     }
 
 
+# ── Errores ───────────────────────────────────────────────────────────────────
+
+@app.errorhandler(credentials.CredentialsError)
+def _error_credenciales(e):
+    """
+    Un fallo del almacén de credenciales, explicado en pantalla.
+
+    Cubre de una vez los sitios que llaman a `credentials` sin capturar
+    (`index`, `ajustes`, `_pantalla_carga`, `network_view`). El caso típico en
+    el servidor es arrancar con una CASAMBI_SECRET_KEY distinta de la que cifró
+    el fichero: sin esto, la respuesta era un 500 sin pista alguna.
+    """
+    app.logger.error("Fallo de credenciales: %s", e)
+    return render_template("error.html", mensaje=str(e)), 500
+
+
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")

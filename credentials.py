@@ -1,5 +1,5 @@
 """
-Cuentas de Casambi guardadas en el Llavero de macOS.
+Cuentas de Casambi, guardadas en el Llavero de macOS o en un fichero cifrado.
 
 La app admite varias cuentas (varias API keys / usuarios); las redes de todas
 se muestran juntas en la barra lateral, y cada red recuerda a qué cuenta
@@ -11,9 +11,15 @@ En el Llavero, bajo el servicio com.impelsa.casambi:
   · "<id>.email"        → email de esa cuenta
   · "<id>.password"     → contraseña de esa cuenta
 
-Se leen y escriben con /usr/bin/security, así que no hace falta ninguna
-dependencia extra ni que el .app esté firmado con un certificado de
-desarrollador.
+En macOS se leen y escriben con /usr/bin/security, así que no hace falta
+ninguna dependencia extra ni que el .app esté firmado con un certificado de
+desarrollador. En el servidor ese binario no existe, y la misma estructura vive
+en un único fichero cifrado con Fernet (ver _BackendFichero): las contraseñas
+de Casambi dan control sobre los edificios de los clientes y no pueden quedar
+legibles en el disco del VPS ni en las copias de seguridad.
+
+El backend lo elige config.backend_credenciales(); de la capa de índice hacia
+arriba, el resto del módulo no sabe cuál está usando.
 
 Los valores se guardan en base64: `security find-generic-password -w` imprime
 el dato en hexadecimal cuando contiene bytes no ASCII (una contraseña con
@@ -26,9 +32,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
+import threading
 import uuid
 from pathlib import Path
+
+import config
 
 SECURITY = "/usr/bin/security"
 SERVICE = "com.impelsa.casambi"
@@ -97,6 +107,8 @@ def _delete_raw(account: str) -> None:
     )
 
 
+# ── Backend: Llavero de macOS ─────────────────────────────────────────────────
+
 # El prompt de `security -w` lee como mucho 128 caracteres por stdin y trunca
 # el resto en silencio, así que el valor se reparte en varias entradas
 # (`clave#0`, `clave#1`, …). Pasarlo como argumento no tendría ese límite,
@@ -104,48 +116,187 @@ def _delete_raw(account: str) -> None:
 _CHUNK = 120
 
 
-def _read(account: str) -> str:
-    first = _read_raw(f"{account}#0")
-    if not first:
-        # Entradas escritas por la versión anterior, sin trocear.
-        return _decode(_read_raw(account))
+class _BackendLlavero:
+    """El Llavero de macOS, vía /usr/bin/security. El troceado es cosa suya."""
 
-    parts = [first]
-    index = 1
-    while True:
-        chunk = _read_raw(f"{account}#{index}")
-        if not chunk:
-            break
-        parts.append(chunk)
-        index += 1
-    return _decode("".join(parts))
+    def leer(self, account: str) -> str:
+        first = _read_raw(f"{account}#0")
+        if not first:
+            # Entradas escritas por la versión anterior, sin trocear.
+            return _decode(_read_raw(account))
+
+        parts = [first]
+        index = 1
+        while True:
+            chunk = _read_raw(f"{account}#{index}")
+            if not chunk:
+                break
+            parts.append(chunk)
+            index += 1
+        return _decode("".join(parts))
+
+    def escribir(self, account: str, value: str) -> None:
+        payload = _encode(value)
+        chunks = [payload[i:i + _CHUNK] for i in range(0, len(payload), _CHUNK)]
+        for index, chunk in enumerate(chunks):
+            _write_raw(f"{account}#{index}", chunk)
+
+        # Restos de un valor anterior más largo, y del esquema sin trocear.
+        index = len(chunks)
+        while _read_raw(f"{account}#{index}"):
+            _delete_raw(f"{account}#{index}")
+            index += 1
+        _delete_raw(account)
+
+        if self.leer(account) != value:
+            raise CredentialsError(
+                f"El Llavero no guardó «{account}» correctamente (valor alterado)."
+            )
+
+    def borrar(self, account: str) -> None:
+        _delete_raw(account)
+        index = 0
+        while _read_raw(f"{account}#{index}"):
+            _delete_raw(f"{account}#{index}")
+            index += 1
+
+
+# ── Backend: fichero cifrado (servidor) ───────────────────────────────────────
+
+_FICHERO = "credentials.enc"
+_FORMATO = 1
+
+# La derivación de clave es cara a propósito (protege de una CASAMBI_SECRET_KEY
+# pobre), así que el resultado se cachea: si no, cada petición pagaría el coste
+# varias veces, porque list_accounts() se llama en casi todas las rutas.
+_claves_derivadas: dict[tuple[bytes, bytes], bytes] = {}
+_lock_fichero = threading.RLock()
+
+
+def _home() -> Path:
+    """Igual que en app.py: CASAMBI_HOME, o el directorio del código."""
+    bruto = os.environ.get("CASAMBI_HOME")
+    return Path(bruto) if bruto else Path(__file__).parent
+
+
+class _BackendFichero:
+    """Un único fichero cifrado con Fernet, con la misma forma clave → valor.
+
+    Se cifra el diccionario entero y no valor a valor: así ni los nombres de
+    las entradas (que revelan cuántas cuentas hay) quedan a la vista.
+    """
+
+    @property
+    def ruta(self) -> Path:
+        return _home() / "data" / _FICHERO
+
+    def _clave(self, salt: bytes) -> bytes:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+        # Se traduce la excepción: para quien llama a este módulo, una clave
+        # que falta es un problema de credenciales, y así lo recoge el
+        # errorhandler de app.py sin tener que conocer config.
+        try:
+            secreto = config.clave_secreta_persistente()
+        except config.ConfigError as e:
+            raise CredentialsError(str(e)) from e
+        cacheada = _claves_derivadas.get((secreto, salt))
+        if cacheada is not None:
+            return cacheada
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt,
+                         iterations=600_000)
+        clave = base64.urlsafe_b64encode(kdf.derive(secreto))
+        _claves_derivadas[(secreto, salt)] = clave
+        return clave
+
+    def _cargar(self) -> dict:
+        ruta = self.ruta
+        if not ruta.is_file():
+            return {}
+        from cryptography.fernet import Fernet, InvalidToken
+
+        try:
+            sobre = json.loads(ruta.read_text(encoding="utf-8"))
+            salt = base64.b64decode(sobre["salt"])
+            crudo = Fernet(self._clave(salt)).decrypt(sobre["datos"].encode("ascii"))
+            datos = json.loads(crudo.decode("utf-8"))
+        except (OSError, ValueError, KeyError, InvalidToken) as e:
+            # No devolver {} en silencio: eso presentaría la app como «sin
+            # configurar» y el siguiente guardado pisaría las credenciales
+            # buenas. Casi siempre es una CASAMBI_SECRET_KEY equivocada.
+            # InvalidToken no trae texto, así que sin el nombre de la clase
+            # el mensaje quedaría con dos puntos y nada detrás.
+            detalle = str(e) or type(e).__name__
+            raise CredentialsError(
+                f"No se pudo descifrar {ruta.name} ({detalle}). "
+                "¿Es la CASAMBI_SECRET_KEY con la que se escribió?"
+            ) from e
+        return datos if isinstance(datos, dict) else {}
+
+    def _guardar(self, datos: dict) -> None:
+        from cryptography.fernet import Fernet
+
+        ruta = self.ruta
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        salt = os.urandom(16)
+        sobre = {
+            "v": _FORMATO,
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "datos": Fernet(self._clave(salt)).encrypt(
+                json.dumps(datos, ensure_ascii=False).encode("utf-8")
+            ).decode("ascii"),
+        }
+        tmp = ruta.with_name(f".{ruta.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(sobre), encoding="utf-8")
+            tmp.chmod(0o600)
+            os.replace(tmp, ruta)  # atómico: nunca queda un fichero a medias
+        except OSError as e:
+            tmp.unlink(missing_ok=True)
+            raise CredentialsError(f"No se pudo escribir {ruta}: {e}") from e
+
+    def leer(self, account: str) -> str:
+        with _lock_fichero:
+            return self._cargar().get(account, "")
+
+    def escribir(self, account: str, value: str) -> None:
+        with _lock_fichero:
+            datos = self._cargar()
+            datos[account] = value
+            self._guardar(datos)
+
+    def borrar(self, account: str) -> None:
+        with _lock_fichero:
+            datos = self._cargar()
+            if datos.pop(account, None) is not None:
+                self._guardar(datos)
+
+
+# ── Despacho ──────────────────────────────────────────────────────────────────
+
+_backends: dict[str, object] = {}
+
+
+def _backend():
+    nombre = config.backend_credenciales()
+    if nombre not in _backends:
+        _backends[nombre] = (
+            _BackendLlavero() if nombre == "keychain" else _BackendFichero()
+        )
+    return _backends[nombre]
+
+
+def _read(account: str) -> str:
+    return _backend().leer(account)
 
 
 def _write(account: str, value: str) -> None:
-    payload = _encode(value)
-    chunks = [payload[i:i + _CHUNK] for i in range(0, len(payload), _CHUNK)]
-    for index, chunk in enumerate(chunks):
-        _write_raw(f"{account}#{index}", chunk)
-
-    # Restos de un valor anterior más largo, y del esquema sin trocear.
-    index = len(chunks)
-    while _read_raw(f"{account}#{index}"):
-        _delete_raw(f"{account}#{index}")
-        index += 1
-    _delete_raw(account)
-
-    if _read(account) != value:
-        raise CredentialsError(
-            f"El Llavero no guardó «{account}» correctamente (valor alterado)."
-        )
+    _backend().escribir(account, value)
 
 
 def _delete(account: str) -> None:
-    _delete_raw(account)
-    index = 0
-    while _read_raw(f"{account}#{index}"):
-        _delete_raw(f"{account}#{index}")
-        index += 1
+    _backend().borrar(account)
 
 
 # ── Índice de cuentas ─────────────────────────────────────────────────────────
@@ -301,14 +452,21 @@ def _migrate_legacy(home: Path | None = None) -> None:
     if _read_index():
         return
 
-    single = {field: _read(field) for field in LEGACY_FIELDS}
-    if all(single.values()):
-        add_account(single["email"], single["api_key"], single["email"],
-                    single["password"])
-        for field in LEGACY_FIELDS:
-            _delete(field)
-        return
+    # Un fallo aquí no debe tumbar la petición: la migración es oportunista y
+    # se dispara desde list_accounts(), que se llama en casi todas las rutas.
+    # Sin esta guarda, un .env heredado en un servidor que aún no puede
+    # escribir credenciales devolvía un 500 en la portada.
+    try:
+        single = {field: _read(field) for field in LEGACY_FIELDS}
+        if all(single.values()):
+            add_account(single["email"], single["api_key"], single["email"],
+                        single["password"])
+            for field in LEGACY_FIELDS:
+                _delete(field)
+            return
 
-    env = _read_legacy_env(home)
-    if env and all(env.values()):
-        add_account(env["email"], env["api_key"], env["email"], env["password"])
+        env = _read_legacy_env(home)
+        if env and all(env.values()):
+            add_account(env["email"], env["api_key"], env["email"], env["password"])
+    except CredentialsError:
+        return
