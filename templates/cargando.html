@@ -20,7 +20,11 @@
 
 {% block scripts %}
 <script>
-  const estadoUrl = "{{ url_for('carga_estado') }}";
+  // La URL lleva el identificador de la tarea: antes el progreso era único para
+  // todo el servidor, así que quien abría una red mientras otro cargaba veía la
+  // barra —y el nombre— de la red ajena, y era redirigido cuando terminaba la de
+  // aquel, no la suya.
+  const estadoUrl = "{{ url_for('carga_estado', task=task_id) }}";
   const labelEl  = document.getElementById('carga-label');
   const barraEl  = document.getElementById('carga-barra');
   const wrapEl   = document.getElementById('carga-barra-wrap');

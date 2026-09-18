@@ -231,8 +231,8 @@ def app_cargada(credenciales, datos_limpios):
         }},
         "error": None,
     })
-    app_module._load.update({"active": False, "label": "", "done": 0,
-                             "total": 0, "error": None})
+    app_module._tasks.clear()
+    app_module._task_por_clave.clear()
     app_module.app.config["TESTING"] = True
     # CSRF desactivado aquí a propósito: estos tests comprueban las rutas, no la
     # protección. Quien la comprueba es test_csrf.py, con ella encendida.
@@ -250,11 +250,23 @@ def cliente(app_cargada):
 
 @pytest.fixture
 def app_sin_cargar(credenciales, datos_limpios):
-    """La app recién arrancada, sin autenticar: debe enseñar pantalla de carga."""
+    """La app recién arrancada, sin autenticar: debe enseñar pantalla de carga.
+
+    Se deja una tarea de autenticación marcada como activa para que
+    `_start_loading` devuelva esa en lugar de lanzar un hilo que saldría de
+    verdad a Casambi Cloud.
+    """
     app_module._state.update({"clients": {}, "networks": None,
                               "cache": {}, "error": None})
-    app_module._load.update({"active": True, "label": "Conectando…",
-                             "done": 0, "total": 0, "error": None})
+    app_module._tasks.clear()
+    app_module._task_por_clave.clear()
+    app_module._tasks["tarea-de-prueba"] = {
+        "active": True, "label": "Conectando…", "done": 0, "total": 0,
+        "error": None, "clave": "auth", "fin": None,
+    }
+    app_module._task_por_clave["auth"] = "tarea-de-prueba"
     app_module.app.config["TESTING"] = True
+    app_module.app.config["WTF_CSRF_ENABLED"] = False
     yield app_module.app
-    app_module._load["active"] = False
+    app_module._tasks.clear()
+    app_module._task_por_clave.clear()

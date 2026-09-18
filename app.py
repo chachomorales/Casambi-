@@ -20,6 +20,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -84,48 +85,175 @@ REPORTS_DIR = _HOME / "reportes"
 DATA_DIR = _HOME / "data"
 
 # ── Estado en memoria ─────────────────────────────────────────────────────────
+# Con credenciales de empresa, compartir sesiones y caché entre todo el equipo
+# es lo deseado: una sola autenticación contra Casambi Cloud y una sola descarga
+# por red. Lo que hay que garantizar es que varios hilos no se pisen, de ahí el
+# lock. Por eso también el servidor corre con un único worker.
 _state: dict = {
     "clients": {},         # account_id → CasambiClient autenticado
     "networks": None,      # redes de todas las cuentas (None = sin cargar aún)
     "cache": {},           # network_id → {network, state, fixtures, fetched_at}
     "error": None,         # errores de autenticación, por cuenta
 }
+_state_lock = threading.RLock()
 
-# Progreso de la carga en curso. La interfaz lo consulta desde la pantalla de
-# carga para no dejar la ventana en blanco mientras se habla con Casambi Cloud.
-_load: dict = {
-    "active": False,
-    "label": "",
-    "done": 0,
-    "total": 0,
-    "error": None,
-}
-_load_lock = threading.Lock()
+# Locks por red, para serializar lo que lee-modifica-escribe un mismo fichero de
+# anotaciones y las activaciones de escena sobre una misma instalación.
+_net_locks: dict[str, threading.RLock] = {}
+_net_locks_guard = threading.Lock()
 
 
-def _progress(label: str, done: int = 0, total: int = 0) -> None:
-    _load.update({"label": label, "done": done, "total": total})
+def _net_lock(network_id: str) -> threading.RLock:
+    clave = str(network_id)
+    with _net_locks_guard:
+        lock = _net_locks.get(clave)
+        if lock is None:
+            lock = _net_locks[clave] = threading.RLock()
+        return lock
 
 
-def _start_loading(work) -> None:
-    """Lanza `work(progress)` en segundo plano si no hay otra carga en curso."""
-    with _load_lock:
-        if _load["active"]:
-            return
-        _load.update({"active": True, "label": "Preparando…", "done": 0,
-                      "total": 0, "error": None})
+# ── Tareas de carga ───────────────────────────────────────────────────────────
+# Antes había una sola barra de progreso para todo el proceso: si alguien estaba
+# cargando una red, la petición de otro se descartaba en silencio y se quedaba
+# mirando el progreso —y el nombre— de una red ajena. Ahora cada carga es una
+# tarea con su identificador, y dos personas que piden la misma red comparten
+# una sola descarga en lugar de lanzar dos.
+_tasks: dict[str, dict] = {}
+_task_por_clave: dict[str, str] = {}   # "auth" | "net:<id>" → tarea activa
+_tasks_lock = threading.Lock()
+
+# Una tarea terminada se conserva un rato: la pantalla de carga todavía tiene que
+# poder preguntar por ella para enterarse de que acabó, o de que falló.
+_VIDA_TAREA_TERMINADA = 600
+
+
+def _purgar_tareas() -> None:
+    """Quita las tareas acabadas hace rato. Se llama con _tasks_lock tomado."""
+    ahora = time.monotonic()
+    caducadas = [
+        tid for tid, t in _tasks.items()
+        if not t["active"] and t["fin"] and ahora - t["fin"] > _VIDA_TAREA_TERMINADA
+    ]
+    for tid in caducadas:
+        if _task_por_clave.get(_tasks[tid]["clave"]) == tid:
+            del _task_por_clave[_tasks[tid]["clave"]]
+        del _tasks[tid]
+
+
+def _start_loading(clave: str, work) -> str:
+    """
+    Lanza `work(progress)` en segundo plano y devuelve el id de la tarea.
+
+    Si ya hay una tarea activa con esa misma clave, devuelve la suya: así dos
+    personas abriendo la misma red ven avanzar la misma barra en vez de disparar
+    dos descargas. Claves distintas corren en paralelo.
+    """
+    with _tasks_lock:
+        _purgar_tareas()
+        en_curso = _task_por_clave.get(clave)
+        if en_curso and _tasks.get(en_curso, {}).get("active"):
+            return en_curso
+
+        task_id = uuid.uuid4().hex[:12]
+        _tasks[task_id] = {"active": True, "label": "Preparando…", "done": 0,
+                           "total": 0, "error": None, "clave": clave, "fin": None}
+        _task_por_clave[clave] = task_id
+
+    def progreso(label: str, done: int = 0, total: int = 0) -> None:
+        with _tasks_lock:
+            tarea = _tasks.get(task_id)
+            if tarea is not None:
+                tarea.update(label=label, done=done, total=total)
 
     def run() -> None:
+        error = None
         try:
-            work(_progress)
+            work(progreso)
         except CasambiAPIError as e:
-            _load["error"] = str(e)
+            error = str(e)
         except Exception as e:  # que un fallo inesperado no deje la barra colgada
-            _load["error"] = f"Error inesperado: {e}"
+            error = f"Error inesperado: {e}"
+            app.logger.exception("Fallo en la tarea %s (%s)", task_id, clave)
         finally:
-            _load["active"] = False
+            with _tasks_lock:
+                tarea = _tasks.get(task_id)
+                if tarea is not None:
+                    tarea.update(active=False, error=error, fin=time.monotonic())
 
     threading.Thread(target=run, daemon=True).start()
+    return task_id
+
+
+def _estado_tarea(task_id: str | None) -> dict:
+    """
+    Progreso de una tarea, para la pantalla de carga.
+
+    Una tarea desconocida —purgada, o de antes de un reinicio— se responde como
+    terminada: así la pantalla redirige en vez de quedarse girando para siempre.
+    """
+    with _tasks_lock:
+        tarea = _tasks.get(task_id) if task_id else None
+        if tarea is None and not task_id:
+            # Sin identificador se devuelve la más reciente, por compatibilidad
+            # con pestañas abiertas antes de este cambio.
+            activas = [t for t in _tasks.values() if t["active"]]
+            tarea = activas[-1] if activas else None
+        if tarea is None:
+            return {"active": False, "label": "", "done": 0, "total": 0,
+                    "error": None}
+        return {k: tarea[k] for k in ("active", "label", "done", "total", "error")}
+
+
+# ── Ficheros de anotaciones ───────────────────────────────────────────────────
+
+def _read_json(path: Path, vacio):
+    """
+    Lee un JSON de anotaciones, preservando el fichero si está corrupto.
+
+    Antes se devolvía vacío en silencio, así que una escritura interrumpida
+    hacía desaparecer todas las anotaciones de una red sin que nadie se
+    enterase, y el siguiente guardado remataba la pérdida. Ahora el fichero malo
+    se aparta con su fecha y queda recuperable a mano.
+    """
+    if not path.is_file():
+        return vacio
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        respaldo = path.with_name(
+            f"{path.name}.corrupto-{datetime.now():%Y%m%d-%H%M%S}"
+        )
+        try:
+            path.rename(respaldo)
+        except OSError:
+            respaldo = None
+        app.logger.error(
+            "%s no es JSON válido (%s); apartado como %s",
+            path.name, e, respaldo.name if respaldo else "no se pudo apartar",
+        )
+        return vacio
+    except OSError as e:
+        app.logger.error("No se pudo leer %s: %s", path.name, e)
+        return vacio
+
+
+def _write_json(path: Path, datos) -> None:
+    """
+    Escribe un JSON de anotaciones de forma atómica.
+
+    Con write_text directo, un corte a media escritura dejaba el fichero
+    truncado, y el lector lo interpretaba como «no hay anotaciones». Con
+    os.replace, o está el contenido viejo o está el nuevo.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(json.dumps(datos, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 # ── Cuentas y autenticación ───────────────────────────────────────────────────
@@ -161,17 +289,29 @@ def _authenticate(progress=None) -> None:
     if progress:
         progress("Listo", len(accounts), len(accounts))
 
-    _state["clients"] = clients
-    _state["networks"] = networks
-    _state["error"] = " · ".join(errors) if errors else None
+    # Una sola escritura bajo el lock: con tres asignaciones sueltas, un hilo
+    # podía ver los clientes nuevos junto a la lista de redes vieja.
+    with _state_lock:
+        _state.update({
+            "clients": clients,
+            "networks": networks,
+            "error": " · ".join(errors) if errors else None,
+        })
 
 
 def _networks_loaded() -> bool:
-    return _state["networks"] is not None
+    with _state_lock:
+        return _state["networks"] is not None
 
 
 def _get_networks() -> list[dict]:
-    return _state["networks"] or []
+    with _state_lock:
+        return _state["networks"] or []
+
+
+def _error_autenticacion() -> str | None:
+    with _state_lock:
+        return _state["error"]
 
 
 def _find_network_meta(network_id: str) -> dict | None:
@@ -186,7 +326,8 @@ def _client_for(network_id: str) -> CasambiClient | None:
     meta = _find_network_meta(network_id)
     if meta is None:
         return None
-    return _state["clients"].get(meta.get("account_id"))
+    with _state_lock:
+        return _state["clients"].get(meta.get("account_id"))
 
 
 def _fetch_network_data(network_id: str, progress=None) -> dict:
@@ -194,7 +335,8 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
     client = _client_for(network_id)
     if client is None:
         raise CasambiAPIError(
-            _state["error"] or "Esa red no pertenece a ninguna cuenta configurada."
+            _error_autenticacion()
+            or "Esa red no pertenece a ninguna cuenta configurada."
         )
 
     meta = _find_network_meta(network_id) or {}
@@ -227,15 +369,21 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
         "fixtures": fixtures,
         "fetched_at": datetime.now(),
     }
-    _state["cache"][str(network_id)] = data
+    with _state_lock:
+        _state["cache"][str(network_id)] = data
     return data
 
 
 def _get_network_data(network_id: str, force: bool = False) -> dict:
     """Datos de la red desde la caché, descargándolos si hace falta."""
     key = str(network_id)
-    if not force and key in _state["cache"]:
-        return _state["cache"][key]
+    if not force:
+        # Comprobar y leer en el mismo paso: entre el `in` y el acceso, un
+        # refresh de otra persona podía vaciar la entrada.
+        with _state_lock:
+            cacheado = _state["cache"].get(key)
+        if cacheado is not None:
+            return cacheado
     return _fetch_network_data(network_id)
 
 
@@ -317,20 +465,12 @@ def _planos_path(network_id: str) -> Path:
 
 
 def _load_planos(network_id: str) -> list:
-    path = _planos_path(network_id)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
+    return _read_json(_planos_path(network_id), [])
 
 
 def _save_planos(network_id: str, items: list) -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-    _planos_path(network_id).write_text(
-        json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with _net_lock(network_id):
+        _write_json(_planos_path(network_id), items)
 
 
 def _pdf_to_image(data: bytes, page_num: int) -> Image.Image:
@@ -370,26 +510,20 @@ def _levels_path(network_id: str) -> Path:
 
 
 def _load_scene_levels(network_id: str) -> dict:
-    path = _levels_path(network_id)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    return _read_json(_levels_path(network_id), {})
 
 
 def _save_scene_level(network_id: str, scene_id: str, unit_id: str, level: str) -> None:
-    levels = _load_scene_levels(network_id)
-    scene_levels = levels.setdefault(str(scene_id), {})
-    if level == "":
-        scene_levels.pop(str(unit_id), None)
-    else:
-        scene_levels[str(unit_id)] = level
-    DATA_DIR.mkdir(exist_ok=True)
-    _levels_path(network_id).write_text(
-        json.dumps(levels, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    # Lee, modifica y escribe el fichero entero, así que sin el lock dos
+    # anotaciones simultáneas sobre la misma red perderían una.
+    with _net_lock(network_id):
+        levels = _load_scene_levels(network_id)
+        scene_levels = levels.setdefault(str(scene_id), {})
+        if level == "":
+            scene_levels.pop(str(unit_id), None)
+        else:
+            scene_levels[str(unit_id)] = level
+        _write_json(_levels_path(network_id), levels)
 
 
 # ── Configuración de botones de pulsadores (anotada por el usuario) ──────────
@@ -405,20 +539,12 @@ def _buttons_path(network_id: str) -> Path:
 
 
 def _load_buttons(network_id: str) -> dict:
-    path = _buttons_path(network_id)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    return _read_json(_buttons_path(network_id), {})
 
 
 def _save_buttons(network_id: str, cfg: dict) -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-    _buttons_path(network_id).write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with _net_lock(network_id):
+        _write_json(_buttons_path(network_id), cfg)
 
 
 # ── Configuración de sensores (anotada por el usuario) ───────────────────────
@@ -436,20 +562,12 @@ def _sensors_path(network_id: str) -> Path:
 
 
 def _load_sensors(network_id: str) -> dict:
-    path = _sensors_path(network_id)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    return _read_json(_sensors_path(network_id), {})
 
 
 def _save_sensors(network_id: str, cfg: dict) -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-    _sensors_path(network_id).write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with _net_lock(network_id):
+        _write_json(_sensors_path(network_id), cfg)
 
 
 # ── Horarios (anotados por el usuario) ────────────────────────────────────────
@@ -462,20 +580,12 @@ def _schedules_path(network_id: str) -> Path:
 
 
 def _load_schedules(network_id: str) -> list:
-    path = _schedules_path(network_id)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
+    return _read_json(_schedules_path(network_id), [])
 
 
 def _save_schedules(network_id: str, items: list) -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-    _schedules_path(network_id).write_text(
-        json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with _net_lock(network_id):
+        _write_json(_schedules_path(network_id), items)
 
 
 # ── Clasificación y preparación de datos para las vistas ─────────────────────
@@ -696,6 +806,27 @@ def require_network(vista):
     return envoltorio
 
 
+def con_lock_de_red(vista):
+    """
+    Serializa la vista por red.
+
+    Las anotaciones se guardan leyendo el fichero entero, modificándolo y
+    reescribiéndolo, así que dos peticiones simultáneas sobre la misma red
+    perdían una de las dos. En `scene_capture` hay además una razón física: dos
+    activaciones a la vez sobre la misma instalación se estorban.
+
+    Va siempre **después** de require_network: si se tomara el lock antes de
+    validar, cada id inventado dejaría una entrada en _net_locks y la memoria
+    crecería sin tope.
+    """
+    @functools.wraps(vista)
+    def envoltorio(network_id, *args, **kwargs):
+        with _net_lock(network_id):
+            return vista(network_id, *args, **kwargs)
+
+    return envoltorio
+
+
 # ── Errores ───────────────────────────────────────────────────────────────────
 
 @app.errorhandler(credentials.CredentialsError)
@@ -769,25 +900,28 @@ def index():
         return redirect(url_for("ajustes"))
 
     if not _networks_loaded():
-        _start_loading(lambda p: _authenticate(p))
-        return _pantalla_carga("Conectando con Casambi Cloud", url_for("index"))
+        tarea = _start_loading("auth", lambda p: _authenticate(p))
+        return _pantalla_carga("Conectando con Casambi Cloud", url_for("index"),
+                               tarea)
 
     return render_template(
         "index.html",
         networks=_get_networks(),
-        error=_state["error"],
+        error=_error_autenticacion(),
         current_id=None,
         cuentas=credentials.list_accounts(_HOME),
     )
 
 
-def _pantalla_carga(titulo: str, destino: str):
+def _pantalla_carga(titulo: str, destino: str, task_id: str):
     """
     Página con barra de progreso mientras la carga corre en segundo plano.
 
     Cada pantalla vuelve a su propio destino: si el usuario pulsa otra red
     mientras algo se está cargando, al terminar aterriza donde pidió, y si esos
-    datos aún no están, esta misma pantalla arranca la carga que falte.
+    datos aún no están, esta misma pantalla arranca la carga que falte. El
+    `task_id` es lo que hace que cada pestaña siga su propia carga y no la de
+    otra persona.
     """
     return render_template(
         "cargando.html",
@@ -796,25 +930,22 @@ def _pantalla_carga(titulo: str, destino: str):
         current_id=None,
         titulo=titulo,
         destino=destino,
+        task_id=task_id,
         cuentas=credentials.list_accounts(_HOME),
     )
 
 
 @app.route("/carga/estado")
 def carga_estado():
-    """Progreso de la carga en curso, que consulta la pantalla de carga."""
-    return jsonify({
-        "active": _load["active"],
-        "label": _load["label"],
-        "done": _load["done"],
-        "total": _load["total"],
-        "error": _load["error"],
-    })
+    """Progreso de una tarea de carga, que consulta la pantalla de carga."""
+    return jsonify(_estado_tarea(request.args.get("task")))
 
 
 def _reset_session() -> None:
     """Olvida las sesiones y la caché tras cambiar de cuentas."""
-    _state.update({"clients": {}, "networks": None, "cache": {}, "error": None})
+    with _state_lock:
+        _state.update({"clients": {}, "networks": None, "cache": {},
+                       "error": None})
 
 
 # ── Ajustes: cuentas de Casambi ───────────────────────────────────────────────
@@ -915,13 +1046,17 @@ def network_view(network_id):
     destino = url_for("network_view", network_id=network_id)
 
     if not _networks_loaded():
-        _start_loading(lambda p: _authenticate(p))
-        return _pantalla_carga("Conectando con Casambi Cloud", destino)
+        tarea = _start_loading("auth", lambda p: _authenticate(p))
+        return _pantalla_carga("Conectando con Casambi Cloud", destino, tarea)
 
     if str(network_id) not in _state["cache"]:
-        _start_loading(lambda p: _fetch_network_data(network_id, p))
+        # La clave es la red, así que dos personas abriéndola a la vez comparten
+        # una sola descarga, y quien abra otra red no espera a esta.
+        tarea = _start_loading(f"net:{network_id}",
+                               lambda p: _fetch_network_data(network_id, p))
         meta = _find_network_meta(network_id) or {}
-        return _pantalla_carga(f"Cargando {meta.get('name') or 'la red'}", destino)
+        return _pantalla_carga(f"Cargando {meta.get('name') or 'la red'}", destino,
+                               tarea)
 
     try:
         data = _get_network_data(network_id)
@@ -933,7 +1068,7 @@ def network_view(network_id):
     return render_template(
         "network.html",
         networks=_get_networks(),
-        error=_state["error"],
+        error=_error_autenticacion(),
         current_id=str(network_id),
         cuentas=credentials.list_accounts(_HOME),
         **ctx,
@@ -949,7 +1084,8 @@ def network_refresh(network_id):
     Es POST porque muta estado: como GET, bastaba una <img src> en un correo
     para invalidar la caché de toda la oficina.
     """
-    _state["cache"].pop(str(network_id), None)
+    with _state_lock:
+        _state["cache"].pop(str(network_id), None)
     return redirect(url_for("network_view", network_id=network_id))
 
 
@@ -991,6 +1127,7 @@ def network_excel(network_id):
 
 @app.route("/network/<network_id>/planos/upload", methods=["POST"])
 @require_network
+@con_lock_de_red
 def plano_upload(network_id):
     """
     Sube un plano en PDF/JPG/PNG (los PDF se convierten a imagen) o importa un
@@ -1049,32 +1186,38 @@ def plano_upload(network_id):
         flash(f"No se pudo procesar el archivo: {e}", "error")
         return back
 
-    items = _load_planos(str(network_id))
     PLANOS_DIR.mkdir(parents=True, exist_ok=True)
     nombre_base = (request.form.get("name") or "").strip()
     nombres = []
-    for img, datos in nuevos:
-        new_id = max((int(p.get("id", 0)) for p in items), default=0) + 1
-        filename = f"plano_{network_id}_{new_id}.png"
-        img.save(PLANOS_DIR / filename)
+    # Leer el índice, numerar y guardar, todo bajo el mismo lock: el id sale de
+    # un max() sobre lo leído, así que dos subidas simultáneas calculaban el
+    # mismo número y una pisaba el PNG de la otra.
+    with _net_lock(network_id):
+        items = _load_planos(str(network_id))
+        for img, datos in nuevos:
+            new_id = max((int(p.get("id", 0)) for p in items), default=0) + 1
+            # El sufijo aleatorio hace imposible por diseño que dos planos
+            # compartan fichero, incluso si el lock fallara algún día.
+            filename = f"plano_{network_id}_{new_id}_{uuid.uuid4().hex[:8]}.png"
+            img.save(PLANOS_DIR / filename)
 
-        name = nombre_base
-        if not name and datos:
-            name = datos["proyecto"] or "Cobertura"
-        if not name:
-            name = Path(file.filename).stem
-        # El nombre del nivel es lo que distingue los planos de un mismo
-        # proyecto, en la pestaña y en la hoja Planos del Excel.
-        if datos and datos.get("nivel"):
-            name = f"{name} · {datos['nivel']}"
+            name = nombre_base
+            if not name and datos:
+                name = datos["proyecto"] or "Cobertura"
+            if not name:
+                name = Path(file.filename).stem
+            # El nombre del nivel es lo que distingue los planos de un mismo
+            # proyecto, en la pestaña y en la hoja Planos del Excel.
+            if datos and datos.get("nivel"):
+                name = f"{name} · {datos['nivel']}"
 
-        plano = {"id": new_id, "name": name, "image": filename, "markers": {}}
-        if datos:
-            plano["origen"] = "cobertura"
-            plano["cobertura"] = datos
-        items.append(plano)
-        nombres.append(name)
-    _save_planos(str(network_id), items)
+            plano = {"id": new_id, "name": name, "image": filename, "markers": {}}
+            if datos:
+                plano["origen"] = "cobertura"
+                plano["cobertura"] = datos
+            items.append(plano)
+            nombres.append(name)
+        _save_planos(str(network_id), items)
 
     if es_cobertura:
         total_nodos = sum(len(d["nodos"]) for _, d in nuevos)
@@ -1095,6 +1238,7 @@ def plano_upload(network_id):
 
 @app.route("/network/<network_id>/planos", methods=["POST"])
 @require_network
+@con_lock_de_red
 def plano_config(network_id):
     """
     Coloca/quita marcadores, renombra o elimina un plano manual, y asocia los
@@ -1175,6 +1319,7 @@ def plano_image(network_id, plano_id):
 
 @app.route("/network/<network_id>/scene_levels", methods=["POST"])
 @require_network
+@con_lock_de_red
 def scene_levels(network_id):
     payload = request.get_json(silent=True) or {}
     scene_id = str(payload.get("scene_id", "")).strip()
@@ -1192,6 +1337,7 @@ def scene_levels(network_id):
 
 @app.route("/network/<network_id>/buttons", methods=["POST"])
 @require_network
+@con_lock_de_red
 def button_config(network_id):
     """Guarda el nº de botones de un pulsador o la anotación de un botón."""
     payload = request.get_json(silent=True) or {}
@@ -1224,6 +1370,7 @@ def button_config(network_id):
 
 @app.route("/network/<network_id>/sensors", methods=["POST"])
 @require_network
+@con_lock_de_red
 def sensor_config(network_id):
     """Guarda el modo y las escenas que activa un sensor (anotación manual)."""
     payload = request.get_json(silent=True) or {}
@@ -1258,6 +1405,7 @@ def sensor_config(network_id):
 
 @app.route("/network/<network_id>/schedules", methods=["POST"])
 @require_network
+@con_lock_de_red
 def schedule_config(network_id):
     """Crea, actualiza o elimina horarios documentados de la red."""
     payload = request.get_json(silent=True) or {}
@@ -1301,6 +1449,7 @@ def schedule_config(network_id):
 
 @app.route("/network/<network_id>/scenes/<scene_id>/capture", methods=["POST"])
 @require_network
+@con_lock_de_red
 def scene_capture(network_id, scene_id):
     """
     Activa la escena en la red real (vía WebSocket) y captura el dimLevel
@@ -1311,7 +1460,8 @@ def scene_capture(network_id, scene_id):
     if client is None:
         return jsonify({
             "ok": False,
-            "error": _state["error"] or "Esa red no pertenece a ninguna cuenta configurada.",
+            "error": _error_autenticacion()
+                     or "Esa red no pertenece a ninguna cuenta configurada.",
         }), 503
 
     try:
