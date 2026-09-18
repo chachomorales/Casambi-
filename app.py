@@ -13,9 +13,11 @@ desde la pantalla de Ajustes de la propia app (ver credentials.py).
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -35,6 +37,7 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from flask_wtf.csrf import CSRFProtect
 
 import auth
 import cobertura
@@ -48,6 +51,11 @@ from report import (
     diagnostico_conectividad,
     generate_report,
 )
+
+# Pillow solo avisa a partir de ~89 Mpx, no aborta: un PNG de pocos kilobytes
+# puede descomprimirse en gigabytes y tumbar el proceso, y con él la sesión de
+# todo el equipo. Se fija aquí porque report.py comparte el módulo.
+Image.MAX_IMAGE_PIXELS = config.MAX_IMAGE_PIXELS
 
 # Como app de escritorio empaquetada, los datos escribibles viven fuera del
 # bundle (CASAMBI_HOME → ~/Library/Application Support/CASAMBI); sin la
@@ -65,6 +73,11 @@ config.aplicar(app)
 # esto, alcanzar el contenedor por detrás del túnel daría acceso total. En modo
 # escritorio no hace nada.
 auth.proteger(app)
+
+# CSRF en todo POST. Hasta ahora ningún formulario llevaba token, así que una
+# página cualquiera podía hacer que el navegador de un técnico creara o borrara
+# cuentas de Casambi, o subiera planos, sin que él se enterase.
+_csrf = CSRFProtect(app)
 
 LOGOS_DIR = Path(__file__).parent / "logos"
 REPORTS_DIR = _HOME / "reportes"
@@ -325,9 +338,25 @@ def _pdf_to_image(data: bytes, page_num: int) -> Image.Image:
     import pymupdf  # import diferido: el resto de la app funciona sin PyMuPDF
 
     doc = pymupdf.open(stream=data, filetype="pdf")
+    if doc.page_count > config.MAX_PLANO_PAGINAS_PDF:
+        raise ValueError(
+            f"El PDF tiene {doc.page_count} páginas; el máximo es "
+            f"{config.MAX_PLANO_PAGINAS_PDF}."
+        )
     if not 1 <= page_num <= doc.page_count:
         raise ValueError(f"El PDF tiene {doc.page_count} página(s); pediste la {page_num}")
-    pix = doc[page_num - 1].get_pixmap(dpi=150)
+
+    # El dpi fijo era un riesgo: una página de plano muy grande genera un pixmap
+    # enorme antes de que el thumbnail lo reduzca. Se baja el dpi lo necesario
+    # para no pasar del tope de píxeles.
+    pagina = doc[page_num - 1]
+    dpi = 150
+    ancho_pt, alto_pt = pagina.rect.width, pagina.rect.height
+    pixeles = (ancho_pt / 72 * dpi) * (alto_pt / 72 * dpi)
+    if pixeles > config.MAX_IMAGE_PIXELS:
+        dpi = max(36, int(dpi * (config.MAX_IMAGE_PIXELS / pixeles) ** 0.5))
+
+    pix = pagina.get_pixmap(dpi=dpi)
     return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
 
 
@@ -636,6 +665,37 @@ def _build_report_context(network_id: str, data: dict) -> dict:
     }
 
 
+# ── Autorización por red ──────────────────────────────────────────────────────
+
+# El network_id llega en la URL y se interpola en nombres de fichero
+# (planos_<id>.json, plano_<id>_<n>.png), así que restringirlo a este alfabeto
+# es lo que impide que una ruta inventada escriba donde no debe. Flask ya
+# descarta las barras, pero no los puntos.
+_RE_NETWORK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def require_network(vista):
+    """
+    Comprueba que el network_id es plausible y que la red es de una cuenta
+    nuestra, antes de que la vista toque disco o la nube.
+
+    Solo `network_view` lo comprobaba, así que cualquier otra ruta atendía un id
+    inventado. Cuando las redes aún no están cargadas no se puede verificar la
+    pertenencia; se deja pasar, porque sin cliente autenticado ninguna vista
+    llega a servir datos, y cada una ya resuelve ese caso a su manera (pantalla
+    de carga o error).
+    """
+    @functools.wraps(vista)
+    def envoltorio(network_id, *args, **kwargs):
+        if not _RE_NETWORK_ID.match(str(network_id)):
+            abort(404)
+        if _networks_loaded() and _find_network_meta(network_id) is None:
+            abort(404)
+        return vista(network_id, *args, **kwargs)
+
+    return envoltorio
+
+
 # ── Errores ───────────────────────────────────────────────────────────────────
 
 @app.errorhandler(credentials.CredentialsError)
@@ -658,6 +718,47 @@ def _error_credenciales(e):
               "guardaron las cuentas.",
         enlace_ajustes=True,
     ), 500
+
+
+@app.errorhandler(413)
+def _error_demasiado_grande(e):
+    """Subida por encima de MAX_CONTENT_LENGTH, explicada en vez de cortada."""
+    limite = config.MAX_CONTENT_LENGTH // (1024 * 1024)
+    mensaje = f"El archivo supera el límite de {limite} MB."
+    if request.is_json or request.accept_mimetypes.best == "application/json":
+        return jsonify({"ok": False, "error": mensaje}), 413
+    flash(mensaje, "error")
+    destino = request.referrer or url_for("index")
+    return redirect(destino), 302
+
+
+@app.after_request
+def _cabeceras_de_seguridad(resp):
+    """
+    Cabeceras que no cuestan nada y cierran clases enteras de problema.
+
+    La CSP permite estilos y scripts en línea porque network.html los trae
+    embebidos; no hay ni un onclick, así que pasar a nonce más adelante es
+    trivial. HSTS solo en modo web: en el escritorio se sirve por http en
+    127.0.0.1 y forzaría al navegador a rechazar la propia app.
+    """
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("Content-Security-Policy", (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ))
+    if not config.ES_ESCRITORIO:
+        resp.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return resp
 
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
@@ -718,11 +819,20 @@ def _reset_session() -> None:
 
 # ── Ajustes: cuentas de Casambi ───────────────────────────────────────────────
 
+def _enmascarar(valor: str, visibles: int = 4) -> str:
+    """«abcd…wxyz»: lo justo para reconocer la clave sin revelarla."""
+    if not valor:
+        return ""
+    if len(valor) <= visibles * 2:
+        return "•" * len(valor)
+    return f"{valor[:visibles]}…{valor[-visibles:]}"
+
 @app.route("/ajustes")
 def ajustes():
-    """Cuentas de Casambi configuradas (guardadas en el Llavero)."""
-    # Se muestra la API key para poder revisarla y corregirla; la contraseña
-    # nunca se envía a la interfaz.
+    """Cuentas de Casambi configuradas."""
+    # Ni la contraseña ni la API key se envían a la interfaz: se muestra una
+    # máscara que basta para reconocer cuál está puesta. Antes la clave viajaba
+    # en claro en el HTML, y queda en la caché del navegador y en el historial.
     cuentas = []
     for entry in credentials.list_accounts(_HOME):
         full = credentials.get_account(entry["id"]) or {}
@@ -730,7 +840,7 @@ def ajustes():
             "id": entry["id"],
             "label": entry.get("label", ""),
             "email": entry.get("email", ""),
-            "api_key": full.get("api_key", ""),
+            "api_key_mask": _enmascarar(full.get("api_key", "")),
         })
 
     return render_template(
@@ -774,11 +884,19 @@ def cuenta_editar(account_id):
         flash("Cuenta eliminada del Llavero.", "ok")
         return redirect(url_for("ajustes"))
 
+    # La API key ya no se envía a la interfaz, así que vacío significa
+    # «déjala como está», igual que la contraseña. Si no, guardar sin tocarla la
+    # borraría.
+    api_key = (request.form.get("api_key") or "").strip()
+    if not api_key:
+        actual = credentials.get_account(account_id) or {}
+        api_key = actual.get("api_key", "")
+
     try:
         credentials.update_account(
             account_id,
             (request.form.get("label") or "").strip(),
-            (request.form.get("api_key") or "").strip(),
+            api_key,
             (request.form.get("email") or "").strip(),
             request.form.get("password") or "",
         )
@@ -792,15 +910,13 @@ def cuenta_editar(account_id):
 
 
 @app.route("/network/<network_id>")
+@require_network
 def network_view(network_id):
     destino = url_for("network_view", network_id=network_id)
 
     if not _networks_loaded():
         _start_loading(lambda p: _authenticate(p))
         return _pantalla_carga("Conectando con Casambi Cloud", destino)
-
-    if _find_network_meta(network_id) is None:
-        abort(404)
 
     if str(network_id) not in _state["cache"]:
         _start_loading(lambda p: _fetch_network_data(network_id, p))
@@ -824,14 +940,21 @@ def network_view(network_id):
     )
 
 
-@app.route("/network/<network_id>/refresh")
+@app.route("/network/<network_id>/refresh", methods=["POST"])
+@require_network
 def network_refresh(network_id):
-    """Descarta la caché; network_view volverá a descargar con barra de progreso."""
+    """
+    Descarta la caché; network_view volverá a descargar con barra de progreso.
+
+    Es POST porque muta estado: como GET, bastaba una <img src> en un correo
+    para invalidar la caché de toda la oficina.
+    """
     _state["cache"].pop(str(network_id), None)
     return redirect(url_for("network_view", network_id=network_id))
 
 
 @app.route("/network/<network_id>/excel")
+@require_network
 def network_excel(network_id):
     try:
         data = _get_network_data(network_id)
@@ -867,6 +990,7 @@ def network_excel(network_id):
 
 
 @app.route("/network/<network_id>/planos/upload", methods=["POST"])
+@require_network
 def plano_upload(network_id):
     """
     Sube un plano en PDF/JPG/PNG (los PDF se convierten a imagen) o importa un
@@ -897,11 +1021,22 @@ def plano_upload(network_id):
         data = file.read()
         if es_cobertura:
             niveles, avisos_cobertura = cobertura.parse_proyecto(data)
+            if len(niveles) > config.MAX_NIVELES_COBERTURA:
+                raise ValueError(
+                    f"El proyecto trae {len(niveles)} niveles; el máximo es "
+                    f"{config.MAX_NIVELES_COBERTURA}."
+                )
             nuevos = [(img, datos) for img, datos in niveles]
         elif ext == ".pdf":
             nuevos = [(_pdf_to_image(data, page), None)]
         else:
             img = Image.open(io.BytesIO(data))
+            # La extensión la elige quien sube; el formato real lo dice Pillow.
+            if img.format not in ("PNG", "JPEG"):
+                raise ValueError(
+                    f"El archivo dice ser {ext} pero su contenido es "
+                    f"{img.format or 'desconocido'}."
+                )
             nuevos = [(ImageOps.exif_transpose(img).convert("RGB"), None)]
         # Las relativas del proyecto son fracciones del plano, así que el
         # reescalado no las invalida.
@@ -959,6 +1094,7 @@ def plano_upload(network_id):
 
 
 @app.route("/network/<network_id>/planos", methods=["POST"])
+@require_network
 def plano_config(network_id):
     """
     Coloca/quita marcadores, renombra o elimina un plano manual, y asocia los
@@ -1026,6 +1162,7 @@ def plano_config(network_id):
 
 
 @app.route("/network/<network_id>/planos/img/<int:plano_id>")
+@require_network
 def plano_image(network_id, plano_id):
     plano = next(
         (p for p in _load_planos(str(network_id)) if int(p.get("id", 0)) == plano_id),
@@ -1037,6 +1174,7 @@ def plano_image(network_id, plano_id):
 
 
 @app.route("/network/<network_id>/scene_levels", methods=["POST"])
+@require_network
 def scene_levels(network_id):
     payload = request.get_json(silent=True) or {}
     scene_id = str(payload.get("scene_id", "")).strip()
@@ -1053,6 +1191,7 @@ def scene_levels(network_id):
 
 
 @app.route("/network/<network_id>/buttons", methods=["POST"])
+@require_network
 def button_config(network_id):
     """Guarda el nº de botones de un pulsador o la anotación de un botón."""
     payload = request.get_json(silent=True) or {}
@@ -1084,6 +1223,7 @@ def button_config(network_id):
 
 
 @app.route("/network/<network_id>/sensors", methods=["POST"])
+@require_network
 def sensor_config(network_id):
     """Guarda el modo y las escenas que activa un sensor (anotación manual)."""
     payload = request.get_json(silent=True) or {}
@@ -1117,6 +1257,7 @@ def sensor_config(network_id):
 
 
 @app.route("/network/<network_id>/schedules", methods=["POST"])
+@require_network
 def schedule_config(network_id):
     """Crea, actualiza o elimina horarios documentados de la red."""
     payload = request.get_json(silent=True) or {}
@@ -1159,6 +1300,7 @@ def schedule_config(network_id):
 
 
 @app.route("/network/<network_id>/scenes/<scene_id>/capture", methods=["POST"])
+@require_network
 def scene_capture(network_id, scene_id):
     """
     Activa la escena en la red real (vía WebSocket) y captura el dimLevel

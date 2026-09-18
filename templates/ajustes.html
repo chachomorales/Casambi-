@@ -25,6 +25,7 @@
 {% for c in cuentas %}
 <form method="post" action="{{ url_for('cuenta_editar', account_id=c.id) }}"
       class="ajustes-form cuenta-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="cuenta-cabecera">
     <h2>{{ c.label }}</h2>
     <span class="cuenta-redes">
@@ -41,8 +42,8 @@
 
   <label class="ajustes-field">
     <span>API Key</span>
-    <input type="text" name="api_key" value="{{ c.api_key }}" required
-           spellcheck="false" autocapitalize="off">
+    <input type="text" name="api_key" spellcheck="false" autocapitalize="off"
+           placeholder="{{ c.api_key_mask }} (guardada — déjalo vacío para no cambiarla)">
   </label>
 
   <label class="ajustes-field">
@@ -69,6 +70,7 @@
 
 <form method="post" action="{{ url_for('cuenta_crear') }}"
       class="ajustes-form cuenta-nueva" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="cuenta-cabecera"><h2>Añadir otra cuenta</h2></div>
 
   <label class="ajustes-field">

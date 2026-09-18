@@ -13,7 +13,13 @@
     </div>
   </div>
   <div class="page-actions">
-    <a href="{{ url_for('network_refresh', network_id=network_id) }}" class="btn btn-outline">↻ Actualizar</a>
+    {# Formulario y no enlace: actualizar descarta la caché, y como GET bastaba
+       una imagen remota en un correo para invalidarla a todo el equipo. #}
+    <form method="post" action="{{ url_for('network_refresh', network_id=network_id) }}"
+          class="accion-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-outline">↻ Actualizar</button>
+    </form>
     <a href="{{ url_for('network_excel', network_id=network_id) }}" class="btn btn-primary">⬇ Descargar Excel</a>
   </div>
 </header>
@@ -446,6 +452,7 @@
   <div class="planos-toolbar">
     <form action="{{ url_for('plano_upload', network_id=network_id) }}" method="post"
           enctype="multipart/form-data" class="plano-upload-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="text" name="name" class="plano-name-input"
              placeholder="Nombre del plano (ej. Piso 1)">
       <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.casambi,.json" required>
@@ -580,6 +587,9 @@
 
 {% block scripts %}
 <script>
+  // Token CSRF para todas las llamadas fetch de esta página.
+  const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
   // Pestañas (la activa se recuerda en el hash de la URL)
   function activateTab(name) {
     document.querySelectorAll('.tab').forEach(t =>
@@ -676,7 +686,7 @@
       try {
         const resp = await fetch('{{ url_for("scene_levels", network_id=network_id) }}', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
           body: JSON.stringify({
             scene_id: input.dataset.scene,
             unit_id: input.dataset.unit,
@@ -702,7 +712,7 @@
     try {
       const resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
         body: JSON.stringify(body),
       });
       const data = await resp.json();
@@ -799,7 +809,7 @@
   document.getElementById('btn-add-horario').addEventListener('click', async () => {
     const resp = await fetch(schedulesUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
       body: JSON.stringify({ action: 'create' }),
     });
     const data = await resp.json();
@@ -822,7 +832,7 @@
       const row = btn.closest('tr');
       await fetch(schedulesUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
         body: JSON.stringify({ action: 'delete', id: parseInt(row.dataset.sched) }),
       });
       location.reload();
@@ -836,7 +846,7 @@
   async function planoPost(body) {
     const resp = await fetch(planosUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
       body: JSON.stringify(body),
     });
     const data = await resp.json();
@@ -1056,7 +1066,8 @@
       btn.disabled = true;
       btn.textContent = '⏳ Activando escena…';
       try {
-        const resp = await fetch(btn.dataset.url, { method: 'POST' });
+        const resp = await fetch(btn.dataset.url,
+          { method: 'POST', headers: { 'X-CSRFToken': CSRF } });
         const data = await resp.json();
         if (!data.ok) throw new Error(data.error || 'Error desconocido');
 

@@ -234,6 +234,9 @@ def app_cargada(credenciales, datos_limpios):
     app_module._load.update({"active": False, "label": "", "done": 0,
                              "total": 0, "error": None})
     app_module.app.config["TESTING"] = True
+    # CSRF desactivado aquí a propósito: estos tests comprueban las rutas, no la
+    # protección. Quien la comprueba es test_csrf.py, con ella encendida.
+    app_module.app.config["WTF_CSRF_ENABLED"] = False
     app_module.app.cliente_api_falso = cliente_api
     yield app_module.app
     app_module._state.update({"clients": {}, "networks": None,

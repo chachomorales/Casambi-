@@ -161,6 +161,9 @@ body {
 .page-header h1 { color: var(--navy); font-size: 26px; margin-bottom: 6px; }
 .page-meta { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: #666; }
 .page-actions { display: flex; gap: 10px; }
+/* El botón de actualizar va dentro de un formulario (es un POST); así
+   sigue alineado con los demás en lugar de formar bloque aparte. */
+.accion-inline { display: flex; margin: 0; }
 
 .btn {
   display: inline-block;

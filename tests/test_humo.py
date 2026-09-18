@@ -98,9 +98,14 @@ def test_borrar_cuenta(cliente, credenciales):
 
 def test_refresh_descarta_la_cache(cliente):
     import app as app_module
-    r = cliente.get(f"/network/{RED_ID}/refresh")
+    r = cliente.post(f"/network/{RED_ID}/refresh")
     assert r.status_code == 302
     assert RED_ID not in app_module._state["cache"]
+
+
+def test_refresh_ya_no_acepta_get(cliente):
+    """Como GET, una <img src> remota invalidaba la caché de toda la oficina."""
+    assert cliente.get(f"/network/{RED_ID}/refresh").status_code == 405
 
 
 # ── Anotaciones del usuario ───────────────────────────────────────────────────
