@@ -36,6 +36,7 @@ from flask import (
     url_for,
 )
 
+import auth
 import cobertura
 import config
 import credentials
@@ -59,6 +60,11 @@ app = Flask(__name__)
 # decide según CASAMBI_MODE: en el servidor la clave tiene que ser estable
 # (cada reinicio invalidaría los tokens CSRF), en el escritorio da igual.
 config.aplicar(app)
+
+# Cloudflare Access va delante, pero la app verifica su JWT igualmente: sin
+# esto, alcanzar el contenedor por detrás del túnel daría acceso total. En modo
+# escritorio no hace nada.
+auth.proteger(app)
 
 LOGOS_DIR = Path(__file__).parent / "logos"
 REPORTS_DIR = _HOME / "reportes"
@@ -643,7 +649,15 @@ def _error_credenciales(e):
     el fichero: sin esto, la respuesta era un 500 sin pista alguna.
     """
     app.logger.error("Fallo de credenciales: %s", e)
-    return render_template("error.html", mensaje=str(e)), 500
+    return render_template(
+        "error.html",
+        titulo="No se pudo acceder a las credenciales",
+        mensaje=str(e),
+        ayuda="Revisa la configuración del servidor. Si el mensaje habla de "
+              "descifrado, la clave del servidor no es la misma con la que se "
+              "guardaron las cuentas.",
+        enlace_ajustes=True,
+    ), 500
 
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────

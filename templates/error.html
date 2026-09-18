@@ -6,7 +6,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Error — Informes Casambi</title>
+  <title>{{ titulo or 'Error' }} — Informes Casambi</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -14,14 +14,12 @@
     <div class="hero">
       <img src="{{ url_for('logos', filename='impelsa_logo.png') }}"
            alt="Impelsa" class="brand-logo">
-      <h1>No se pudo acceder a las credenciales</h1>
+      <h1>{{ titulo or 'Algo ha ido mal' }}</h1>
       <div class="flash flash-error">{{ mensaje }}</div>
-      <p>
-        Revisa la configuración del servidor y vuelve a intentarlo. Si el
-        mensaje habla de descifrado, es que la clave del servidor no es la
-        misma con la que se guardaron las cuentas.
-      </p>
-      <a href="{{ url_for('ajustes') }}" class="sidebar-settings">Ir a Ajustes</a>
+      {% if ayuda %}<p>{{ ayuda }}</p>{% endif %}
+      {% if enlace_ajustes %}
+        <a href="{{ url_for('ajustes') }}" class="sidebar-settings">Ir a Ajustes</a>
+      {% endif %}
     </div>
   </main>
 </body>

@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-web.txt
 
 # Explícito y no `*.py`: desktop.py, main.py y los run*.sh son de la versión de
 # escritorio y de la etapa CLI anterior, y no pintan nada en el servidor.
-COPY app.py casambi_api.py cobertura.py config.py credentials.py report.py wsgi.py ./
+COPY app.py auth.py casambi_api.py cobertura.py config.py credentials.py report.py wsgi.py ./
 COPY templates/ ./templates/
 COPY static/ ./static/
 COPY logos/ ./logos/
@@ -32,6 +32,11 @@ RUN useradd --uid 1000 --create-home casambi \
 USER casambi
 VOLUME ["/data"]
 EXPOSE 8000
+
+# /salud es ruta libre a propósito: no devuelve datos, solo confirma que el
+# worker responde.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/salud', timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["gunicorn", "-w", "1", "-k", "gthread", "--threads", "8", \
