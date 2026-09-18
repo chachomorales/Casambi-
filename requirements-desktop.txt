@@ -1,0 +1,5 @@
+# Solo la app nativa de macOS: ventana WKWebView y empaquetado.
+# No instalar en el servidor (pywebview arrastra pyobjc y no pinta nada en Linux).
+
+pywebview==6.2.1
+pyinstaller==6.22.2

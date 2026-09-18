@@ -1,0 +1,3 @@
+# Desarrollo y pruebas, en cualquiera de las dos versiones.
+
+pytest==8.4.2
