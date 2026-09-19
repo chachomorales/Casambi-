@@ -24,6 +24,32 @@ El dominio va **separado del de Impelsa a propósito**: Cloudflare exige tomar e
 control del DNS del dominio que gestione, y hacerlo sobre el corporativo tocaría
 los registros del correo de la empresa.
 
+### Contratar el VPS, paso a paso
+
+1. Cuenta en <https://accounts.hetzner.com>. **Registrarse como empresa, con el
+   NIF de Impelsa en el campo VAT-ID**: siendo empresa española con VAT-ID
+   intracomunitario, Hetzner aplica inversión del sujeto pasivo y no carga el IVA
+   alemán. Como particular se paga y no se recupera.
+2. Hetzner pide **verificación de identidad** en cuentas nuevas; tarda de horas a
+   un par de días. Conviene hacerlo antes que nada.
+3. <https://console.hetzner.cloud> → New Project (`casambi`) → Add Server:
+
+   | Campo | Valor |
+   |---|---|
+   | Location | Falkenstein o Núremberg (DE), o Helsinki (FI) — datos en la UE |
+   | Image | Ubuntu 24.04 LTS |
+   | Type | Arm64 → **CAX11** (2 vCPU, 4 GB, 40 GB) |
+   | Networking | dejar la IPv4 pública (para el SSH) |
+   | SSH keys | añadir la clave pública; nunca contraseña |
+   | Firewalls | uno que solo permita el 22. Con el túnel no hace falta abrir más |
+
+**Por qué Arm.** La imagen se construye en el propio servidor, y todas las
+dependencias nativas —Pillow, PyMuPDF, cryptography— tienen ruedas manylinux para
+aarch64; está comprobado corriendo la imagen arm64 en un Mac con Apple Silicon.
+Si se prefiere x86, el CX22 es el equivalente y cuesta alrededor de un euro más.
+Lo que no conviene recortar son los 4 GB de RAM: `cobertura.parse_proyecto`
+mantiene descomprimidos a la vez todos los planos de un proyecto multinivel.
+
 ## Puesta en marcha
 
 ### 1. El servidor
