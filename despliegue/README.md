@@ -14,21 +14,23 @@ Internet ─▶ Cloudflare Access ─▶ túnel saliente ─▶ VPS
 
 | Qué | Dónde | Coste |
 |---|---|---|
-| VPS | Hetzner Cloud, **Ashburn (Virginia)**, x86 con 4 GB | ~5-9 $/mes |
+| VPS | Hetzner Cloud, x86 con **4 GB de RAM como mínimo** | ~5-9 $/mes |
 | Dominio, aparte del corporativo | cualquier registrador | ~12 €/año |
 | Cuenta Cloudflare, Zero Trust Free | cloudflare.com | 0 € (hasta 50 usuarios) |
 | Copias | Backblaze B2 | 0 € (10 GB gratis; aquí se usan menos de 10 MB) |
 | Identidad | Google Workspace, ya contratado | 0 € |
 
-**La ubicación es Ashburn, Virginia**, no Europa. El equipo y los clientes están
-en Guatemala: desde allí Ashburn queda a unos 50-70 ms y Alemania a 160-200 ms,
-al mismo precio. Cloudflare amortigua parte de esa diferencia —el tráfico entra
-por su punto de presencia local y viaja por su troncal—, pero no hay ninguna
-razón para elegir el origen lejano.
+**Sobre la ubicación.** El equipo y los clientes están en Guatemala. Desde allí,
+Ashburn (Virginia) queda a unos 50-70 ms y Europa a 180-200 ms. Las ubicaciones
+europeas de Hetzner son más baratas, así que es un intercambio legítimo: en
+Europa la app se nota algo menos ágil, pero es perfectamente usable para consultar
+informes, y Cloudflare absorbe parte del trayecto porque el tráfico entra por su
+punto de presencia local y viaja por su troncal. **El despliegue actual está en
+Helsinki.** Migrar más adelante es recrear el servidor y restaurar la copia.
 
-Consecuencia práctica: **los servidores Arm (CAX) de Hetzner son solo europeos**,
-así que en EEUU se usa un x86 de la serie CPX. Da igual para el despliegue,
-porque la imagen se construye en el propio servidor.
+Los servidores Arm (CAX) son solo europeos; en EEUU se usa un x86 de la serie
+CPX. Da igual para el despliegue, porque la imagen se construye en el propio
+servidor y las dependencias nativas traen ruedas para las dos arquitecturas.
 
 El dominio va **separado del de Impelsa a propósito**: Cloudflare exige tomar el
 control del DNS del dominio que gestione, y hacerlo sobre el corporativo tocaría
@@ -45,9 +47,9 @@ los registros del correo de la empresa.
 
    | Campo | Valor |
    |---|---|
-   | Location | **Ashburn, Virginia** (lo más cerca de Guatemala) |
-   | Image | Ubuntu 24.04 LTS |
-   | Type | x86, serie CPX, **con 4 GB de RAM** |
+   | Location | Ashburn (más cerca) o Helsinki/Alemania (más barato) |
+   | Image | Ubuntu LTS (24.04 es la más rodada; 26.04 también sirve) |
+   | Type | x86, **con 4 GB de RAM como mínimo** |
    | Networking | dejar la IPv4 pública (para el SSH) |
    | SSH keys | añadir la clave pública; nunca contraseña |
    | Firewalls | uno que solo permita el 22. Con el túnel no hace falta abrir más |
@@ -71,8 +73,25 @@ irregulares; DigitalOcean en Nueva York, ~24 $/mes.
 ### 1. El servidor
 
 ```sh
-# Como root, en un Debian/Ubuntu recién creado
-apt update && apt install -y docker.io docker-compose-plugin git
+# Como root, en un Ubuntu recién creado
+apt update && apt install -y git docker.io docker-compose-v2
+
+# Comprobar que quedó el plugin v2 (hace falta `docker compose`, con espacio):
+docker compose version
+```
+
+`docker-compose-v2` es el nombre en los repositorios de Ubuntu; el repositorio
+oficial de Docker lo llama `docker-compose-plugin`. Si `docker compose version`
+falla —posible en una LTS recién salida, donde el empaquetado puede ir con
+retraso—, se instala desde el origen:
+
+```sh
+curl -fsSL https://get.docker.com | sh
+```
+
+Luego el usuario sin privilegios que ejecutará la app:
+
+```sh
 adduser --disabled-password --gecos "" casambi
 usermod -aG docker casambi
 ```
