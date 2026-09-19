@@ -5,7 +5,11 @@ Produces a styled .xlsx with sheets: Red, Elementos, Grupos, Escenas.
 
 from __future__ import annotations
 
+import functools
 import io
+import re
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -1149,6 +1153,10 @@ def _marker_color(category: str) -> tuple[int, int, int]:
     return _rgb(_CATEGORY_MARKER_COLORS.get(category, COLOR_COVER_DARK))
 
 
+# Se cachea porque se llamaba en cada marcador dibujado, y en una máquina sin
+# las fuentes de Windows o macOS eso son cuatro OSError por marcador antes de
+# acertar con DejaVu.
+@functools.lru_cache(maxsize=64)
 def _marker_font(size: int) -> ImageFont.ImageFont:
     for name in ("arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf",
                  "Helvetica.ttc", "segoeui.ttf"):
@@ -1589,6 +1597,45 @@ def _sheet_horarios(wb: Workbook, schedules: list | None = None) -> None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
+# Cuántos días se conservan los informes generados. En el escritorio daba igual
+# que se acumularan; en un servidor compartido, `reportes/` solo crecía.
+DIAS_INFORMES = 7
+
+
+def _nombre_informe(net_name: str | None) -> str:
+    """
+    Nombre único para el .xlsx del informe.
+
+    Antes la marca de tiempo tenía granularidad de minuto y el nombre de la red
+    se usaba tal cual: dos descargas de la misma red en el mismo minuto daban el
+    mismo nombre, y la segunda sobrescribía el fichero mientras `send_file` podía
+    estar leyendo la primera. El nombre de la red viene del API de Casambi y trae
+    comas, barras y acentos, así que se sanea.
+    """
+    limpio = re.sub(r"[^\w.-]+", "_", (net_name or "red").strip()).strip("_.")
+    limpio = (limpio or "red")[:60]
+    marca = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"Casambi_{limpio}_{marca}_{uuid.uuid4().hex[:6]}.xlsx"
+
+
+def _purgar_informes(directorio: Path, dias: int = DIAS_INFORMES) -> int:
+    """Borra los informes más viejos de `dias`. Devuelve cuántos quitó."""
+    limite = time.time() - dias * 86400
+    quitados = 0
+    try:
+        candidatos = list(directorio.glob("Casambi_*.xlsx"))
+    except OSError:
+        return 0
+    for fichero in candidatos:
+        try:
+            if fichero.stat().st_mtime < limite:
+                fichero.unlink()
+                quitados += 1
+        except OSError:
+            continue  # que no se caiga la descarga por no poder limpiar
+    return quitados
+
+
 def generate_report(network: dict, state: dict, fixtures: dict | None = None,
                     scene_levels: dict | None = None,
                     button_config: dict | None = None,
@@ -1625,10 +1672,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     _sheet_horarios(wb, schedules=schedules)
     _sheet_planos(wb, network, images_dir, manual_planos=manual_planos)
 
-    net_name = (network.get("name") or "red").replace(" ", "_")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename  = f"Casambi_{net_name}_{timestamp}.xlsx"
-    filepath  = Path(output_dir) / filename
-
+    filepath = Path(output_dir) / _nombre_informe(network.get("name"))
     wb.save(filepath)
+    _purgar_informes(Path(output_dir))
     return filepath
