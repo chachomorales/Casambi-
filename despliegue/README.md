@@ -14,11 +14,21 @@ Internet ─▶ Cloudflare Access ─▶ túnel saliente ─▶ VPS
 
 | Qué | Dónde | Coste |
 |---|---|---|
-| VPS | Hetzner Cloud CX22, Alemania o Finlandia | ~5-6 €/mes con IVA |
+| VPS | Hetzner Cloud, **Ashburn (Virginia)**, x86 con 4 GB | ~5-9 $/mes |
 | Dominio, aparte del corporativo | cualquier registrador | ~12 €/año |
 | Cuenta Cloudflare, Zero Trust Free | cloudflare.com | 0 € (hasta 50 usuarios) |
 | Copias | Backblaze B2 | 0 € (10 GB gratis; aquí se usan menos de 10 MB) |
 | Identidad | Google Workspace, ya contratado | 0 € |
+
+**La ubicación es Ashburn, Virginia**, no Europa. El equipo y los clientes están
+en Guatemala: desde allí Ashburn queda a unos 50-70 ms y Alemania a 160-200 ms,
+al mismo precio. Cloudflare amortigua parte de esa diferencia —el tráfico entra
+por su punto de presencia local y viaja por su troncal—, pero no hay ninguna
+razón para elegir el origen lejano.
+
+Consecuencia práctica: **los servidores Arm (CAX) de Hetzner son solo europeos**,
+así que en EEUU se usa un x86 de la serie CPX. Da igual para el despliegue,
+porque la imagen se construye en el propio servidor.
 
 El dominio va **separado del de Impelsa a propósito**: Cloudflare exige tomar el
 control del DNS del dominio que gestione, y hacerlo sobre el corporativo tocaría
@@ -26,29 +36,35 @@ los registros del correo de la empresa.
 
 ### Contratar el VPS, paso a paso
 
-1. Cuenta en <https://accounts.hetzner.com>. **Registrarse como empresa, con el
-   NIF de Impelsa en el campo VAT-ID**: siendo empresa española con VAT-ID
-   intracomunitario, Hetzner aplica inversión del sujeto pasivo y no carga el IVA
-   alemán. Como particular se paga y no se recupera.
+1. Cuenta en <https://accounts.hetzner.com>. Registrarse como empresa si se
+   quiere la factura a nombre de Impelsa. Guatemala está fuera de la UE, así que
+   no hay IVA alemán ni nada que declarar por ese lado.
 2. Hetzner pide **verificación de identidad** en cuentas nuevas; tarda de horas a
    un par de días. Conviene hacerlo antes que nada.
 3. <https://console.hetzner.cloud> → New Project (`casambi`) → Add Server:
 
    | Campo | Valor |
    |---|---|
-   | Location | Falkenstein o Núremberg (DE), o Helsinki (FI) — datos en la UE |
+   | Location | **Ashburn, Virginia** (lo más cerca de Guatemala) |
    | Image | Ubuntu 24.04 LTS |
-   | Type | Arm64 → **CAX11** (2 vCPU, 4 GB, 40 GB) |
+   | Type | x86, serie CPX, **con 4 GB de RAM** |
    | Networking | dejar la IPv4 pública (para el SSH) |
    | SSH keys | añadir la clave pública; nunca contraseña |
    | Firewalls | uno que solo permita el 22. Con el túnel no hace falta abrir más |
 
-**Por qué Arm.** La imagen se construye en el propio servidor, y todas las
-dependencias nativas —Pillow, PyMuPDF, cryptography— tienen ruedas manylinux para
-aarch64; está comprobado corriendo la imagen arm64 en un Mac con Apple Silicon.
-Si se prefiere x86, el CX22 es el equivalente y cuesta alrededor de un euro más.
-Lo que no conviene recortar son los 4 GB de RAM: `cobertura.parse_proyecto`
-mantiene descomprimidos a la vez todos los planos de un proyecto multinivel.
+**Los 4 GB son lo que no conviene recortar.** `cobertura.parse_proyecto` mantiene
+descomprimidos a la vez todos los planos de un proyecto multinivel; el tope de 20
+niveles (`config.MAX_NIVELES_COBERTURA`) acota el peor caso, pero el margen con
+2 GB es escaso y la diferencia de precio son un par de dólares.
+
+Las dependencias nativas —Pillow, PyMuPDF, cryptography— traen ruedas manylinux
+para x86-64 y para aarch64, así que la arquitectura no condiciona nada: si algún
+día se vuelve a Europa, un CAX (Arm) funciona igual.
+
+**Si Hetzner rechaza la cuenta** (a veces piden verificación extra según el
+país): Vultr tiene Ciudad de México y Miami, más cerca pero más caro (~20 $/mes
+por 4 GB); Contabo tiene Nueva York y es más barato, con soporte y rendimiento
+irregulares; DigitalOcean en Nueva York, ~24 $/mes.
 
 ## Puesta en marcha
 
