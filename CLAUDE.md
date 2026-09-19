@@ -1,17 +1,27 @@
 # CASAMBI — Generador de informes de redes Casambi
 
-App de escritorio nativa de macOS (Impelsa) que lee una red de iluminación Casambi
-desde la nube, la muestra en una interfaz de pestañas y exporta un informe Excel
-con formato corporativo.
+Lee una red de iluminación Casambi desde la nube, la muestra en una interfaz de
+pestañas y exporta un informe Excel con formato corporativo.
 
-No es una web: `desktop.py` arranca Flask en un hilo, en un puerto local aleatorio,
-y lo sirve dentro de una ventana WKWebView (pywebview). `app.py` nunca se ejecuta
-por sí solo.
+**Esta rama (`web`) sirve las dos versiones desde la misma base de código.** La de
+escritorio es la de siempre: `desktop.py` arranca Flask en un hilo, en un puerto
+local aleatorio, dentro de una ventana WKWebView. La web corre con gunicorn en un
+contenedor, detrás de Cloudflare Access. `config.py` decide cuál es cuál según
+`CASAMBI_MODE`, y `app.py` nunca se ejecuta por sí solo en ninguna de las dos.
+
+La rama `main` (en `~/Developer/CASAMBI`) sigue siendo solo la de macOS. Un arreglo
+que valga para ambas se pasa con `git cherry-pick`.
 
 ## Arranque
 
 ```bash
-.venv/bin/python desktop.py          # desarrollo
+.venv/bin/python desktop.py          # escritorio, en desarrollo
+
+# servidor, en desarrollo (sin Access: CASAMBI_MODE=desktop lo desactiva)
+CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
+  -b 127.0.0.1:8000 wsgi:application
+
+.venv/bin/python -m pytest tests/ -q   # 225 tests, ~7 s
 
 # empaquetar — SIEMPRE fuera del proyecto (ver más abajo), y luego instalar
 .venv/bin/pyinstaller CASAMBI.spec --noconfirm --distpath /tmp/casambi-dist --workpath /tmp/casambi-build
@@ -103,11 +113,43 @@ de la carpeta del proyecto.
 elige red, genera Excel). `run.sh` / `run_web.sh` / `run.bat` / `run_web.bat` son de
 esa etapa previa; el flujo vigente es `desktop.py`.
 
+## La versión web
+
+Los detalles de puesta en marcha están en `despliegue/README.md`. Lo que conviene
+saber al tocar el código:
+
+- **Un solo worker, a propósito.** `gunicorn -w 1 -k gthread --threads 8`. Las
+  sesiones de Casambi y la caché de redes viven en memoria del proceso y se
+  comparten entre todo el equipo, que es lo que queremos con credenciales de
+  empresa. Con varios workers habría una autenticación y una caché por proceso, y
+  `/carga/estado` respondería desde un worker distinto al que está descargando.
+  `--timeout 300` tampoco es adorno: `scene_capture` duerme diez segundos y un
+  Excel con planos puede pasar de treinta.
+- **Todo POST necesita token CSRF.** Los formularios llevan `{{ csrf_token() }}`;
+  el JavaScript de `network.html` lo toma del `<meta name="csrf-token">` de
+  `base.html` y lo manda en `X-CSRFToken`. Al añadir un `fetch`, no olvidarlo.
+- **Las rutas de red van decoradas, y el orden importa:** `@require_network`
+  primero y `@con_lock_de_red` después. Al revés, cada `network_id` inventado
+  dejaría una entrada en `_net_locks` y la memoria crecería sin tope.
+- **Las anotaciones se escriben con `_write_json`**, nunca con `write_text`: es
+  atómico, y un corte a media escritura dejaba el fichero truncado, que los
+  loaders interpretaban como «no hay anotaciones». Un JSON ilegible ahora se
+  aparta como `<nombre>.corrupto-<fecha>` en vez de desaparecer.
+- **El progreso es por tarea.** `_start_loading(clave, work)` devuelve un id; dos
+  personas en la misma red comparten una sola descarga porque comparten clave.
+- **Ante la duda, `auth.py` cierra.** Si no se puede consultar el JWKS de
+  Cloudflare, la respuesta es 503, nunca un 200.
+
 ## Estructura
 
 | Archivo | Rol |
 |---|---|
-| `desktop.py` | Lanzador: puerto libre, hilo Flask, ventana pywebview. Prepara `CASAMBI_HOME` |
+| `desktop.py` | Lanzador de escritorio: puerto libre, hilo Flask, ventana pywebview. Prepara `CASAMBI_HOME` y fija `CASAMBI_MODE=desktop` |
+| `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
+| `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies |
+| `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
+| `tests/` | 225 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
 | `report.py` | Excel con openpyxl: 11 hojas, portada con tarjetas, planos compuestos con Pillow. También `diagnostico_conectividad()`, que usan la hoja Conectividad y la interfaz |
@@ -193,7 +235,12 @@ no inventario, y mezclarlos con lo instalado haría leer una propuesta como un h
   (`CASAMBI_HOME`); en desarrollo, junto al código. `data/` del bundle es solo semilla
   del primer arranque.
 - Las credenciales viven en el Llavero de macOS, servicio `com.impelsa.casambi`, y se
-  editan desde la pantalla de Ajustes. **Nunca añadir `.env` a `datas` en
+  editan desde la pantalla de Ajustes. **En el servidor no hay Llavero**: la misma
+  API de `credentials.py` escribe en `data/credentials.enc`, cifrado con Fernet y
+  una clave derivada de `CASAMBI_SECRET_KEY` con PBKDF2. El backend se elige solo
+  (`config.backend_credenciales()`), y de la capa de índice hacia arriba el módulo
+  no sabe cuál usa. Perder esa clave es perder las credenciales, también las de las
+  copias de seguridad. **Nunca añadir `.env` a `datas` en
   `CASAMBI.spec`**: viajaría en texto plano dentro del `.app`.
 - Dos detalles del Llavero que ya costaron una depuración: los valores se guardan en
   **base64** (`security -w` imprime hex cuando hay bytes no ASCII, y ese hex es
