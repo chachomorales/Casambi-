@@ -25,8 +25,16 @@ Ashburn (Virginia) queda a unos 50-70 ms y Europa a 180-200 ms. Las ubicaciones
 europeas de Hetzner son más baratas, así que es un intercambio legítimo: en
 Europa la app se nota algo menos ágil, pero es perfectamente usable para consultar
 informes, y Cloudflare absorbe parte del trayecto porque el tráfico entra por su
-punto de presencia local y viaja por su troncal. **El despliegue actual está en
-Helsinki.** Migrar más adelante es recrear el servidor y restaurar la copia.
+punto de presencia local y viaja por su troncal. **El despliegue actual es un CAX11 en Helsinki**: 2 vCPU Ampere Altra (ARM64),
+4 GB de RAM con ECC, 40 GB NVMe. Migrar más adelante es recrear el servidor y
+restaurar la copia.
+
+Se eligió ARM sobre el x86 equivalente, al mismo precio, porque es la
+arquitectura sobre la que se verificó todo durante el desarrollo: la imagen se
+construyó en un Mac con Apple Silicon, y los informes con planos, el cifrado de
+credenciales y el ciclo de copia y restauración se probaron en aarch64. Las tres
+imágenes de terceros del despliegue —cloudflared, restic y alpine— publican
+arm64. Antes de añadir cualquier otra al compose, conviene comprobar que también.
 
 Los servidores Arm (CAX) son solo europeos; en EEUU se usa un x86 de la serie
 CPX. Da igual para el despliegue, porque la imagen se construye en el propio
