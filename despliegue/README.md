@@ -97,19 +97,44 @@ python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 
 ### 3. Cloudflare
 
-1. Añadir el dominio a Cloudflare (cambia los servidores de nombres).
-2. **Zero Trust → Networks → Tunnels**: crear un túnel, copiar su token a
-   `TUNNEL_TOKEN`, y publicar la ruta `casambi.<dominio>` → `http://casambi:8000`.
-3. **Zero Trust → Settings → Authentication**: añadir Google Workspace como
-   proveedor.
-4. **Zero Trust → Access → Applications**: crear una aplicación *self-hosted*
-   para `casambi.<dominio>`, con una política que permita los correos
-   `@impelsa.es`. Copiar el **Application Audience (AUD) tag** a
-   `CASAMBI_ACCESS_AUD`, y el dominio del equipo
-   (`<equipo>.cloudflareaccess.com`) a `CASAMBI_ACCESS_TEAM_DOMAIN`.
+**El dominio de la app y el de las identidades son independientes.** La app vive
+en el dominio nuevo; el login usa las cuentas de Google Workspace del dominio
+corporativo. No hay que tocar el DNS del corporativo, que es justamente el que
+aloja el correo.
 
-Opcionalmente, `CASAMBI_ACCESS_EMAILS` restringe además dentro de la app: una
-segunda lista, por si la política de Access se relaja por error.
+1. Añadir **el dominio nuevo** a Cloudflare (cambia sus servidores de nombres).
+2. **Zero Trust → Networks → Tunnels**: crear un túnel, copiar su token a
+   `TUNNEL_TOKEN`, y publicar la ruta `casambi.<dominio-nuevo>` →
+   `http://casambi:8000`.
+3. **Zero Trust → Settings → Authentication → Add new → Google**: pide un Client
+   ID y un Client Secret, que se crean en Google Cloud Console → *APIs &
+   Services* → *Credentials* → OAuth client ID, tipo *Web application*, con la
+   URL de callback que muestra Cloudflare.
+4. **Zero Trust → Access → Applications → Add an application → Self-hosted**,
+   para `casambi.<dominio-nuevo>`. Política: *Include* → *Emails ending in* →
+   `@<dominio-corporativo>`.
+5. Copiar el **Application Audience (AUD) tag** a `CASAMBI_ACCESS_AUD`, y el
+   dominio del equipo (`<equipo>.cloudflareaccess.com`) a
+   `CASAMBI_ACCESS_TEAM_DOMAIN`.
+
+#### Restringir a un subconjunto del dominio
+
+La política por dominio da acceso a cualquiera con cuenta corporativa. Mientras
+en Workspace estén las mismas personas que usan la herramienta, eso no concede
+nada de más. Cuando deje de ser cierto —y conviene revisarlo, porque la app
+enciende luces en instalaciones de clientes—, hay dos caminos:
+
+- **Rápido**: añadir los correos a `CASAMBI_ACCESS_EMAILS` en `.env`. La app
+  comprueba esa lista además de la firma del JWT, así que funciona sin tocar
+  Cloudflare. Es también una segunda barrera por si la política de Access se
+  relaja por error.
+- **Ordenado**: un grupo de Workspace (`casambi@<dominio-corporativo>`) y una
+  política de Access sobre ese grupo, de forma que dar y quitar acceso se haga
+  en Google Workspace. **Ojo: los grupos exigen el proveedor «Google Workspace»,
+  no el «Google» del paso 3**, y ese requiere además una cuenta de servicio en
+  Google Cloud con delegación en todo el dominio y el permiso
+  `admin.directory.group.readonly`. Elegir «Google» y esperar que el filtro por
+  grupo funcione es un error silencioso: la política no encaja con nadie.
 
 ### 4. Arrancar
 
