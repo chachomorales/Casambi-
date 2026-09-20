@@ -3,14 +3,17 @@
 Lee una red de iluminación Casambi desde la nube, la muestra en una interfaz de
 pestañas y exporta un informe Excel con formato corporativo.
 
-**Esta rama (`web`) sirve las dos versiones desde la misma base de código.** La de
-escritorio es la de siempre: `desktop.py` arranca Flask en un hilo, en un puerto
-local aleatorio, dentro de una ventana WKWebView. La web corre con gunicorn en un
-contenedor, detrás de Cloudflare Access. `config.py` decide cuál es cuál según
-`CASAMBI_MODE`, y `app.py` nunca se ejecuta por sí solo en ninguna de las dos.
+**Una sola base de código sirve las dos versiones.** La de escritorio es la de
+siempre: `desktop.py` arranca Flask en un hilo, en un puerto local aleatorio,
+dentro de una ventana WKWebView. La web corre con gunicorn en un contenedor,
+detrás de Cloudflare Access. `config.py` decide cuál es cuál según `CASAMBI_MODE`,
+y `app.py` nunca se ejecuta por sí solo en ninguna de las dos.
 
-La rama `main` (en `~/Developer/CASAMBI`) sigue siendo solo la de macOS. Un arreglo
-que valga para ambas se pasa con `git cherry-pick`.
+El 2026-09-20 la rama `web` se fusionó en `main` (fast-forward, sin conflictos) y
+`main` pasó a ser la rama única. Antes vivían separadas —`main` solo macOS, `web`
+todo lo demás— y un arreglo común había que pasarlo con `git cherry-pick`; ya no:
+un cambio que toque las dos versiones se hace una vez y aquí. Al tocar algo
+compartido, comprueba que sigue valiendo en los dos modos.
 
 ## Arranque
 
