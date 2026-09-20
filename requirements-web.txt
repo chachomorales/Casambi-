@@ -2,5 +2,4 @@
 
 gunicorn==23.0.0        # servidor WSGI; el de Werkzeug es de desarrollo
 cryptography==50.0.1    # Fernet, para el fichero de credenciales cifrado
-Flask-WTF==1.2.2        # CSRFProtect
 PyJWT[crypto]==2.14.0   # verificación del JWT de Cloudflare Access

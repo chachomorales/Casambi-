@@ -8,6 +8,7 @@
 #   .venv/bin/pip install -r requirements.txt -r requirements-desktop.txt  # macOS
 
 Flask==3.1.3
+Flask-WTF==1.2.2
 Jinja2==3.1.6
 Werkzeug==3.1.8
 requests==2.32.5
@@ -16,3 +17,9 @@ openpyxl==3.1.5
 pillow==11.3.0
 PyMuPDF==1.26.5
 python-dotenv==1.2.1
+
+# Flask-WTF es común, no solo del servidor: `app.py` hace
+# `from flask_wtf.csrf import CSRFProtect` en el módulo, y las plantillas
+# llaman a `csrf_token()`. Sin ella el .app de macOS se cierra al abrir con
+# ModuleNotFoundError. `jwt` y `cryptography` sí son solo del servidor porque
+# auth.py y credentials.py las importan dentro de las funciones.
