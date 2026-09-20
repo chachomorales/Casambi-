@@ -85,6 +85,7 @@
   <button class="tab" data-tab="escenas">Escenas <span class="badge">{{ escenas|length }}</span></button>
   <button class="tab" data-tab="horarios">Horarios <span class="badge">{{ horarios|length }}</span></button>
   <button class="tab" data-tab="planos">Planos <span class="badge">{{ planos|length }}</span></button>
+  <button class="tab" data-tab="bitacora">Bitácora <span class="badge">{{ bitacora|length }}</span></button>
 </nav>
 
 <!-- Elementos -->
@@ -441,6 +442,54 @@
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No hay horarios documentados. Usa "＋ Agregar horario".</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Bitácora -->
+<section class="tab-panel" id="panel-bitacora">
+  <div class="horarios-toolbar">
+    <button id="btn-add-bitacora" class="btn btn-outline">＋ Nueva entrada</button>
+    <span class="hint">Quién tocó la red, cuándo y a petición de quién. Las entradas
+      marcadas <em>auto</em> las escribe la app sola al guardar una anotación.</span>
+  </div>
+  <div class="table-wrap">
+    <table id="tbl-bitacora">
+      <thead><tr>
+        <th>Fecha</th><th>Tipo</th><th>Técnico</th><th>Solicitado por</th>
+        <th>Descripción</th><th>Pendiente</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for b in bitacora %}
+        <tr data-entry="{{ b.id }}"{% if b.origen == 'automatica' %} class="bit-auto"{% endif %}>
+          <td><input type="datetime-local" class="bit-field bit-fecha" data-field="fecha"
+                     value="{{ b.fecha }}"></td>
+          <td>
+            <select class="bit-field" data-field="tipo">
+              {% for op in bitacora_tipos %}
+              <option value="{{ op }}" {% if b.tipo == op %}selected{% endif %}>{{ op }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="bit-tecnico">
+            {{ b.tecnico }}
+            {% if b.origen == 'automatica' %}<span class="bit-badge">auto{% if b.veces and b.veces > 1 %} ×{{ b.veces }}{% endif %}</span>{% endif %}
+          </td>
+          <td><input type="text" class="bit-field" data-field="solicitado_por"
+                     value="{{ b.solicitado_por }}" placeholder="ej. Ing. López"></td>
+          <td><textarea class="bit-field bit-desc" data-field="descripcion"
+                        rows="2" placeholder="Qué se hizo y por qué">{{ b.descripcion }}</textarea></td>
+          <td><textarea class="bit-field bit-desc" data-field="pendiente"
+                        rows="2" placeholder="Qué queda por hacer">{{ b.pendiente }}</textarea></td>
+          <td>
+            <button class="bit-del" title="Eliminar entrada">✕</button>
+            {% if b.editado %}<div class="bit-editado" title="Editada el {{ b.editado }}">editada</div>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">Sin entradas todavía. Se irán creando solas al anotar la red, o usa "＋ Nueva entrada".</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -834,6 +883,41 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
         body: JSON.stringify({ action: 'delete', id: parseInt(row.dataset.sched) }),
+      });
+      location.reload();
+    });
+  });
+
+  // ── Bitácora ─────────────────────────────────────────────────────────────
+  const bitacoraUrl = '{{ url_for("bitacora_config", network_id=network_id) }}';
+
+  document.getElementById('btn-add-bitacora').addEventListener('click', async () => {
+    const resp = await fetch(bitacoraUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ action: 'create' }),
+    });
+    const data = await resp.json();
+    if (data.ok) location.reload();
+  });
+
+  document.querySelectorAll('#tbl-bitacora .bit-field').forEach(el => {
+    el.addEventListener('change', () => {
+      const row = el.closest('tr');
+      const body = { action: 'update', id: parseInt(row.dataset.entry) };
+      row.querySelectorAll('.bit-field').forEach(f => { body[f.dataset.field] = f.value; });
+      postConfig(bitacoraUrl, body, el);
+    });
+  });
+
+  document.querySelectorAll('#tbl-bitacora .bit-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar esta entrada de la bitácora?')) return;
+      const row = btn.closest('tr');
+      await fetch(bitacoraUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ action: 'delete', id: parseInt(row.dataset.entry) }),
       });
       location.reload();
     });

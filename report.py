@@ -1595,6 +1595,58 @@ def _sheet_horarios(wb: Workbook, schedules: list | None = None) -> None:
     _freeze(ws)
 
 
+def _sheet_bitacora(wb: Workbook, bitacora: list | None = None) -> None:
+    """
+    Historial de intervenciones sobre la red.
+
+    Las demás hojas describen cómo está la instalación; esta, cómo llegó a
+    estarlo. Va en el informe porque es lo que el cliente necesita ver para
+    aprobar un cambio o recordar uno anterior: sin ella, el trabajo hecho se
+    queda dentro de la app.
+
+    Se ordena de más reciente a más antigua, que es como se consulta.
+    """
+    ws = wb.create_sheet("Bitácora")
+    ws.sheet_view.showGridLines = False
+    ws.row_dimensions[1].height = 30
+
+    if bitacora is None:
+        bitacora = []
+
+    columns = ["Fecha", "Tipo", "Técnico", "Solicitado por", "Descripción",
+               "Pendiente", "Origen"]
+    _write_header_row(ws, 1, columns)
+
+    def _clave(entrada: dict) -> str:
+        return str(entrada.get("fecha") or entrada.get("creado") or "")
+
+    for row_idx, b in enumerate(sorted(bitacora, key=_clave, reverse=True), start=2):
+        veces = int(b.get("veces", 1) or 1)
+        origen = "Automática" if b.get("origen") == "automatica" else "Manual"
+        if veces > 1:
+            origen += f" (×{veces})"
+        if b.get("editado"):
+            origen += " · editada"
+
+        values = [
+            str(b.get("fecha", "") or "-").replace("T", " "),
+            b.get("tipo", "") or "-",
+            b.get("tecnico", "") or "-",
+            b.get("solicitado_por", "") or "-",
+            b.get("descripcion", "") or "-",
+            b.get("pendiente", "") or "-",
+            origen,
+        ]
+        _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
+        ws.row_dimensions[row_idx].height = 18
+
+    if not bitacora:
+        ws.cell(row=2, column=1, value="Sin intervenciones registradas.")
+
+    _auto_width(ws)
+    _freeze(ws)
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 # Cuántos días se conservan los informes generados. En el escritorio daba igual
@@ -1641,6 +1693,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
                     button_config: dict | None = None,
                     sensor_config: dict | None = None,
                     schedules: list | None = None,
+                    bitacora: list | None = None,
                     images_dir: Path | None = None,
                     manual_planos: list | None = None,
                     output_dir: str = ".") -> Path:
@@ -1650,6 +1703,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     button_config: {unit_id: {"count", "buttons"}} — botones anotados de pulsadores.
     sensor_config: {unit_id: {"modo", "escena_presencia", "escena_ausencia"}} — sensores anotados.
     schedules: lista de horarios documentados por el usuario.
+    bitacora: historial de intervenciones sobre la red.
     images_dir: carpeta con las imágenes de la red (<image_id>.png) para la hoja Planos.
     manual_planos: [{"name", "path", "markers", "cobertura"}] — planos subidos
         manualmente; "cobertura" solo lo traen los importados del simulador.
@@ -1670,6 +1724,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     _sheet_grupos(wb, network)
     _sheet_escenas(wb, network, scene_levels=scene_levels)
     _sheet_horarios(wb, schedules=schedules)
+    _sheet_bitacora(wb, bitacora=bitacora)
     _sheet_planos(wb, network, images_dir, manual_planos=manual_planos)
 
     filepath = Path(output_dir) / _nombre_informe(network.get("name"))

@@ -30,6 +30,7 @@ from flask import (
     Flask,
     abort,
     flash,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -588,6 +589,107 @@ def _save_schedules(network_id: str, items: list) -> None:
         _write_json(_schedules_path(network_id), items)
 
 
+# ── Bitácora de la red (anotada por el usuario y por la propia app) ──────────
+# Las demás anotaciones describen cómo está la red *ahora*. Esta describe cómo
+# llegó a estarlo: quién tocó qué, cuándo y a petición de quién. Es lo que
+# permite sostener una versión de los hechos cuando un cliente pide un cambio
+# sobre otro anterior, o discute uno que no recuerda haber pedido.
+#
+# Se persiste en data/bitacora_<red>.json, del más reciente al más antiguo.
+
+BITACORA_TIPOS = [
+    "Instalación",
+    "Cambio de configuración",
+    "Avería / reparación",
+    "Mantenimiento",
+    "Visita de diagnóstico",
+    "Ampliación",
+    "Otro",
+]
+
+# Ventana dentro de la cual varias entradas automáticas iguales se funden en
+# una. Sin esto, anotar diez niveles de escena seguidos dejaría diez líneas
+# idénticas y la bitácora sería ilegible justo cuando más falta hace.
+BITACORA_FUSION_MINUTOS = 30
+
+_BITACORA_FMT = "%Y-%m-%dT%H:%M"
+
+
+def _bitacora_path(network_id: str) -> Path:
+    return DATA_DIR / f"bitacora_{network_id}.json"
+
+
+def _load_bitacora(network_id: str) -> list:
+    return _read_json(_bitacora_path(network_id), [])
+
+
+def _save_bitacora(network_id: str, items: list) -> None:
+    with _net_lock(network_id):
+        _write_json(_bitacora_path(network_id), items)
+
+
+def _tecnico() -> str:
+    """
+    Quién está haciendo el cambio.
+
+    En la web sale del JWT de Cloudflare Access, así que no hay que teclearlo ni
+    se puede falsear. En el escritorio vale "escritorio", lo que de paso marca
+    solas las entradas hechas desde el laboratorio.
+    """
+    return getattr(g, "user_email", "") or "desconocido"
+
+
+def _ahora() -> str:
+    return datetime.now().strftime(_BITACORA_FMT)
+
+
+def _bitacora_anotar(network_id: str, tipo: str, descripcion: str) -> None:
+    """
+    Añade una entrada automática al guardar una anotación.
+
+    Una bitácora que dependa de que alguien se acuerde de escribirla se abandona
+    a los dos meses. Estas se generan solas, así que siempre queda rastro de qué
+    se tocó y cuándo, aunque nadie documente el porqué.
+    """
+    with _net_lock(network_id):
+        items = _load_bitacora(network_id)
+        tecnico, ahora = _tecnico(), _ahora()
+
+        # Diez ajustes seguidos son un trabajo, no diez trabajos: si la entrada
+        # más reciente es automática, del mismo técnico y la misma descripción,
+        # se actualiza en vez de apilar otra.
+        if items:
+            ultima = items[0]
+            if (ultima.get("origen") == "automatica"
+                    and ultima.get("tecnico") == tecnico
+                    and ultima.get("descripcion") == descripcion):
+                try:
+                    creada = datetime.strptime(ultima.get("creado", ""), _BITACORA_FMT)
+                except ValueError:
+                    creada = None
+                if creada is not None and (
+                        datetime.now() - creada).total_seconds() <= BITACORA_FUSION_MINUTOS * 60:
+                    ultima["veces"] = int(ultima.get("veces", 1)) + 1
+                    ultima["fecha"] = ahora
+                    _write_json(_bitacora_path(network_id), items)
+                    return
+
+        items.insert(0, {
+            "id": max((int(i.get("id", 0)) for i in items), default=0) + 1,
+            "fecha": ahora,
+            "tecnico": tecnico,
+            "tipo": tipo,
+            "solicitado_por": "",
+            "descripcion": descripcion,
+            "pendiente": "",
+            "origen": "automatica",
+            "veces": 1,
+            "creado": ahora,
+            "editado": None,
+        })
+        _write_json(_bitacora_path(network_id), items)
+
+
 # ── Clasificación y preparación de datos para las vistas ─────────────────────
 
 SENSOR_TYPES = {"sensor", "occupancysensor", "lightsensor", "motionsensor", "multisensor"}
@@ -763,6 +865,8 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         "grupos": grupos,
         "escenas": escenas,
         "horarios": _load_schedules(str(network_id)),
+        "bitacora": _load_bitacora(str(network_id)),
+        "bitacora_tipos": BITACORA_TIPOS,
         "planos": _load_planos(str(network_id)),
         # Mapa unit_id → nombre/categoría para el editor de planos (JS)
         "elementos_map": {
@@ -1118,6 +1222,7 @@ def network_excel(network_id):
         button_config=_load_buttons(str(network_id)),
         sensor_config=_load_sensors(str(network_id)),
         schedules=_load_schedules(str(network_id)),
+        bitacora=_load_bitacora(str(network_id)),
         images_dir=images_dir,
         manual_planos=manual_planos,
         output_dir=str(REPORTS_DIR),
@@ -1218,6 +1323,8 @@ def plano_upload(network_id):
             items.append(plano)
             nombres.append(name)
         _save_planos(str(network_id), items)
+        _bitacora_anotar(str(network_id), "Cambio de configuración",
+                         "Se actualizaron los planos")
 
     if es_cobertura:
         total_nodos = sum(len(d["nodos"]) for _, d in nuevos)
@@ -1302,6 +1409,8 @@ def plano_config(network_id):
         return jsonify({"ok": False, "error": "Acción inválida"}), 400
 
     _save_planos(str(network_id), items)
+    _bitacora_anotar(str(network_id), "Cambio de configuración",
+                     "Se actualizaron los planos")
     return jsonify({"ok": True})
 
 
@@ -1332,6 +1441,8 @@ def scene_levels(network_id):
         return jsonify({"ok": False, "error": "La intensidad debe ser un número de 0 a 100"}), 400
 
     _save_scene_level(str(network_id), scene_id, unit_id, level)
+    _bitacora_anotar(str(network_id), "Cambio de configuración",
+                     "Se anotaron intensidades de escena")
     return jsonify({"ok": True})
 
 
@@ -1365,6 +1476,8 @@ def button_config(network_id):
         btn["programado"] = programado
 
     _save_buttons(str(network_id), cfg)
+    _bitacora_anotar(str(network_id), "Cambio de configuración",
+                     "Se anotó la programación de pulsadores")
     return jsonify({"ok": True})
 
 
@@ -1400,6 +1513,8 @@ def sensor_config(network_id):
         "escena_ausencia": esc_aus,
     }
     _save_sensors(str(network_id), cfg)
+    _bitacora_anotar(str(network_id), "Cambio de configuración",
+                     "Se anotó la configuración de sensores")
     return jsonify({"ok": True})
 
 
@@ -1419,6 +1534,8 @@ def schedule_config(network_id):
             "apagado": "", "escena": "", "habilitado": True,
         })
         _save_schedules(str(network_id), items)
+        _bitacora_anotar(str(network_id), "Cambio de configuración",
+                         "Se modificaron los horarios")
         return jsonify({"ok": True, "id": new_id})
 
     try:
@@ -1433,6 +1550,8 @@ def schedule_config(network_id):
     if action == "delete":
         items.remove(sched)
         _save_schedules(str(network_id), items)
+        _bitacora_anotar(str(network_id), "Cambio de configuración",
+                         "Se modificaron los horarios")
         return jsonify({"ok": True})
 
     if action == "update":
@@ -1442,6 +1561,60 @@ def schedule_config(network_id):
         if "habilitado" in payload:
             sched["habilitado"] = bool(payload["habilitado"])
         _save_schedules(str(network_id), items)
+        _bitacora_anotar(str(network_id), "Cambio de configuración",
+                         "Se modificaron los horarios")
+        return jsonify({"ok": True})
+
+    return jsonify({"ok": False, "error": "Acción inválida"}), 400
+
+
+@app.route("/network/<network_id>/bitacora", methods=["POST"])
+@require_network
+@con_lock_de_red
+def bitacora_config(network_id):
+    """Crea, actualiza o elimina entradas de la bitácora de la red."""
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).strip()
+    items = _load_bitacora(str(network_id))
+
+    if action == "create":
+        ahora = _ahora()
+        new_id = max((int(i.get("id", 0)) for i in items), default=0) + 1
+        items.insert(0, {
+            "id": new_id, "fecha": ahora, "tecnico": _tecnico(),
+            "tipo": "Cambio de configuración", "solicitado_por": "",
+            "descripcion": "", "pendiente": "", "origen": "manual",
+            "veces": 1, "creado": ahora, "editado": None,
+        })
+        _save_bitacora(str(network_id), items)
+        return jsonify({"ok": True, "id": new_id})
+
+    try:
+        eid = int(payload.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Falta el id de la entrada"}), 400
+
+    entrada = next((i for i in items if int(i.get("id", 0)) == eid), None)
+    if entrada is None:
+        return jsonify({"ok": False, "error": "Entrada no encontrada"}), 404
+
+    if action == "delete":
+        items.remove(entrada)
+        _save_bitacora(str(network_id), items)
+        return jsonify({"ok": True})
+
+    if action == "update":
+        if "tipo" in payload and str(payload["tipo"]).strip() not in BITACORA_TIPOS:
+            return jsonify({"ok": False, "error": "Tipo de intervención inválido"}), 400
+        for campo in ("fecha", "tipo", "solicitado_por", "descripcion", "pendiente"):
+            if campo in payload:
+                entrada[campo] = str(payload[campo]).strip()
+        # `tecnico` y `creado` no se tocan nunca. Una bitácora que se pueda
+        # reescribir sin dejar rastro no sostiene nada frente a un cliente, así
+        # que el sello de quién y cuándo queda fuera de lo editable, y cualquier
+        # cambio posterior deja su marca en `editado`.
+        entrada["editado"] = _ahora()
+        _save_bitacora(str(network_id), items)
         return jsonify({"ok": True})
 
     return jsonify({"ok": False, "error": "Acción inválida"}), 400

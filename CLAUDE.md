@@ -152,7 +152,7 @@ saber al tocar el código:
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
-| `report.py` | Excel con openpyxl: 11 hojas, portada con tarjetas, planos compuestos con Pillow. También `diagnostico_conectividad()`, que usan la hoja Conectividad y la interfaz |
+| `report.py` | Excel con openpyxl: 12 hojas, portada con tarjetas, planos compuestos con Pillow. También `diagnostico_conectividad()`, que usan la hoja Conectividad y la interfaz |
 | `credentials.py` | Cuentas múltiples en el Llavero de macOS vía `/usr/bin/security` |
 | `cobertura.py` | Importa proyectos `.casambi` del Simulador de Cobertura: plano, nodos y paredes |
 | `templates/`, `static/` | Interfaz: `network.html` (9 pestañas) es el grueso |
@@ -173,7 +173,7 @@ saber al tocar el código:
 La nube de Casambi no expone la programación de pulsadores, el modo de los sensores,
 los horarios ni los niveles por escena. La app los captura en la interfaz y los
 guarda como JSON en `data/<tipo>_<network_id>.json`
-(`buttons_`, `sensors_`, `schedules_`, `scene_levels_`, `planos_`). Todo eso acaba en
+(`buttons_`, `sensors_`, `schedules_`, `scene_levels_`, `planos_`, `bitacora_`). Todo eso acaba en
 el Excel. **Al tocar esas hojas del informe, recuerda que su origen es el JSON local,
 no la API.**
 
