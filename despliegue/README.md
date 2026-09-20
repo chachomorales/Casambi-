@@ -25,20 +25,23 @@ Ashburn (Virginia) queda a unos 50-70 ms y Europa a 180-200 ms. Las ubicaciones
 europeas de Hetzner son más baratas, así que es un intercambio legítimo: en
 Europa la app se nota algo menos ágil, pero es perfectamente usable para consultar
 informes, y Cloudflare absorbe parte del trayecto porque el tráfico entra por su
-punto de presencia local y viaja por su troncal. **El despliegue actual es un CAX11 en Helsinki**: 2 vCPU Ampere Altra (ARM64),
-4 GB de RAM con ECC, 40 GB NVMe. Migrar más adelante es recrear el servidor y
+punto de presencia local y viaja por su troncal. **El despliegue actual es un
+x86 de 4 GB en Núremberg** (`ubuntu-4gb-nbg1-1`: 2 vCPU, 3,7 GB de RAM, 38 GB de
+disco) con Ubuntu 26.04 LTS. Migrar más adelante es recrear el servidor y
 restaurar la copia.
 
-Se eligió ARM sobre el x86 equivalente, al mismo precio, porque es la
-arquitectura sobre la que se verificó todo durante el desarrollo: la imagen se
-construyó en un Mac con Apple Silicon, y los informes con planos, el cifrado de
-credenciales y el ciclo de copia y restauración se probaron en aarch64. Las tres
-imágenes de terceros del despliegue —cloudflared, restic y alpine— publican
-arm64. Antes de añadir cualquier otra al compose, conviene comprobar que también.
+Se intentó levantarlo en un CAX11 Arm, más barato a igual tamaño, y no se pudo:
+la sub-pestaña **Arm64** del formulario de Hetzner no ofrecía ningún tipo en las
+ubicaciones probadas. Es falta de existencias, y va y viene. **No merece la pena
+reintentarlo**, y conviene dejarlo escrito para no gastar otra tarde en ello: la
+arquitectura es transparente en este despliegue porque la imagen se construye en
+el propio servidor, y Pillow, PyMuPDF y cryptography publican ruedas para x86-64
+y para aarch64 por igual. Las tres imágenes de terceros —cloudflared, restic y
+alpine— también traen las dos. La diferencia de precio entre un CAX y el CX
+equivalente son céntimos al mes.
 
 Los servidores Arm (CAX) son solo europeos; en EEUU se usa un x86 de la serie
-CPX. Da igual para el despliegue, porque la imagen se construye en el propio
-servidor y las dependencias nativas traen ruedas para las dos arquitecturas.
+CPX.
 
 El dominio va **separado del de Impelsa a propósito**: Cloudflare exige tomar el
 control del DNS del dominio que gestione, y hacerlo sobre el corporativo tocaría
@@ -55,12 +58,22 @@ los registros del correo de la empresa.
 
    | Campo | Valor |
    |---|---|
-   | Location | Ashburn (más cerca) o Helsinki/Alemania (más barato) |
-   | Image | Ubuntu LTS (24.04 es la más rodada; 26.04 también sirve) |
+   | Location | Ashburn (más cerca) o Alemania/Finlandia (más barato). El actual está en Núremberg |
+   | Image | Ubuntu LTS; el actual usa 26.04 (`resolute`) |
    | Type | x86, **con 4 GB de RAM como mínimo** |
    | Networking | dejar la IPv4 pública (para el SSH) |
-   | SSH keys | añadir la clave pública; nunca contraseña |
+   | SSH keys | **marcar la casilla de la clave en este formulario**; nunca contraseña |
    | Firewalls | uno que solo permita el 22. Con el túnel no hace falta abrir más |
+
+**Marcar la clave SSH es el paso que más caro sale olvidar.** Tenerla registrada
+en la cuenta de Hetzner no basta: si la casilla se queda sin marcar, el servidor
+nace con `authorized_keys` vacío, Hetzner manda una contraseña de root por correo
+y solo queda entrar por la consola web. Y esa consola es noVNC, que **teclea mal
+varios caracteres con teclado español**: el guion bajo sale como guion, `&&` como
+`77`, `>>` como `..` y `:` como `;`. Escribir ahí una clave SSH es inviable —
+`authorized_keys` acaba llamándose `authorized-keys` y el `echo` imprime en
+pantalla en vez de redirigir. Si se llega a esa situación, la salida no es pelear
+con el teclado: `passwd` en la consola, y `ssh-copy-id` desde el Mac.
 
 **Los 4 GB son lo que no conviene recortar.** `cobertura.parse_proyecto` mantiene
 descomprimidos a la vez todos los planos de un proyecto multinivel; el tope de 20
@@ -68,8 +81,8 @@ niveles (`config.MAX_NIVELES_COBERTURA`) acota el peor caso, pero el margen con
 2 GB es escaso y la diferencia de precio son un par de dólares.
 
 Las dependencias nativas —Pillow, PyMuPDF, cryptography— traen ruedas manylinux
-para x86-64 y para aarch64, así que la arquitectura no condiciona nada: si algún
-día se vuelve a Europa, un CAX (Arm) funciona igual.
+para x86-64 y para aarch64, así que la arquitectura no condiciona nada: el día que
+haya existencias de CAX (Arm), o que se migre a Ashburn con un CPX, funciona igual.
 
 **Si Hetzner rechaza la cuenta** (a veces piden verificación extra según el
 país): Vultr tiene Ciudad de México y Miami, más cerca pero más caro (~20 $/mes
@@ -80,37 +93,82 @@ irregulares; DigitalOcean en Nueva York, ~24 $/mes.
 
 ### 1. El servidor
 
-```sh
-# Como root, en un Ubuntu recién creado
-apt update && apt install -y git docker.io docker-compose-v2
+Lo primero, cerrar el SSH. Ubuntu deja `PasswordAuthentication yes` puesto en
+`/etc/ssh/sshd_config.d/50-cloud-init.conf`:
 
-# Comprobar que quedó el plugin v2 (hace falta `docker compose`, con espacio):
+```sh
+cat > /etc/ssh/sshd_config.d/01-casambi.conf <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+EOF
+sshd -t && systemctl reload ssh
+sshd -T | grep -E '^(passwordauthentication|permitrootlogin)'
+```
+
+**El `01` del nombre no es decorativo.** sshd se queda con el **primer** valor que
+encuentra de cada opción y lee `sshd_config.d` en orden alfabético, así que un
+`99-casambi.conf` iría después del `50-cloud-init.conf` y no serviría de nada.
+El `sshd -T` del final es lo que confirma el valor efectivo, no el escrito.
+
+Después, Docker desde el repositorio oficial:
+
+```sh
+apt-get update && apt-get install -y ca-certificates curl gnupg git
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
 docker compose version
 ```
 
-`docker-compose-v2` es el nombre en los repositorios de Ubuntu; el repositorio
-oficial de Docker lo llama `docker-compose-plugin`. Si `docker compose version`
-falla —posible en una LTS recién salida, donde el empaquetado puede ir con
-retraso—, se instala desde el origen:
+Se usa el repositorio de Docker en vez del `docker.io` de Ubuntu porque da
+versiones al día y quita la duda de si el plugin v2 está empaquetado. Con una
+imagen de Ubuntu recién salida, conviene comprobar antes que Docker publica para
+su nombre en clave:
 
 ```sh
-curl -fsSL https://get.docker.com | sh
+. /etc/os-release
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://download.docker.com/linux/ubuntu/dists/$VERSION_CODENAME/Release"
 ```
 
-Luego el usuario sin privilegios que ejecutará la app:
+Un 200 y adelante. Para 26.04 (`resolute`) responde 200.
 
-```sh
-adduser --disabled-password --gecos "" casambi
-usermod -aG docker casambi
-```
+**Sobre correr como root.** El despliegue vive en `/opt/casambi` y lo maneja root.
+Un usuario aparte sería más ortodoxo, pero tendría que estar en el grupo `docker`,
+y pertenecer a ese grupo **equivale a ser root en el host**: basta con montar `/`
+dentro de un contenedor. La separación sería cosmética. Lo que sí importa, y sí
+está hecho, es que la app no corre como root *dentro* del contenedor: el
+Dockerfile crea el usuario `casambi` (uid 1000) y gunicorn arranca con él.
 
 ### 2. El código y la configuración
 
 ```sh
-su - casambi
-git clone <repo> casambi && cd casambi && git checkout web
+git clone --branch web git@github.com:chachomorales/Casambi-.git /opt/casambi
+cd /opt/casambi
 cp despliegue/.env.deploy.example .env && chmod 600 .env
 ```
+
+El repositorio es privado, así que el servidor necesita clave propia. Se genera
+en el servidor y la pública se añade **como deploy key del repositorio**, sin
+permiso de escritura (GitHub → el repo → Settings → Deploy keys):
+
+```sh
+ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_github -N '' -C 'casambi-server-deploy'
+printf 'Host github.com\n  IdentityFile /root/.ssh/id_ed25519_github\n  IdentitiesOnly yes\n' \
+  > /root/.ssh/config && chmod 600 /root/.ssh/config
+```
+
+**Deploy key del repositorio, no clave de la cuenta.** Una clave de cuenta da
+acceso de lectura y escritura a *todos* los repositorios del usuario, y esto es
+una máquina expuesta a internet. Se distinguen probando la conexión: `ssh -T
+git@github.com` responde `Hi usuario/repo!` con una deploy key y `Hi usuario!`
+con una de cuenta.
 
 Rellenar `.env`. La clave se genera así:
 
@@ -143,6 +201,25 @@ aloja el correo.
 5. Copiar el **Application Audience (AUD) tag** a `CASAMBI_ACCESS_AUD`, y el
    dominio del equipo (`<equipo>.cloudflareaccess.com`) a
    `CASAMBI_ACCESS_TEAM_DOMAIN`.
+
+**El nombre del equipo se elige una vez y hay que elegirlo pronto.** Al activar
+Zero Trust, Cloudflare asigna uno al azar del estilo `autumn-frost-4839`, y ese
+nombre es el dominio que verá el equipo en la pantalla de login. Cambiarlo es un
+botón en *Settings → Team name*, pero **el dominio del equipo va dentro de la URL
+de retorno registrada en Google**, así que cambiarlo después de crear el cliente
+OAuth rompe el login con `redirect_uri_mismatch`. Renombrarlo antes de tocar
+Google no cuesta nada; después, obliga a repasar Google y los proveedores.
+
+El AUD no aparece en el JSON de configuración de la aplicación. Está en la ficha
+de la aplicación (`···` → *Copy AUD*), y se distingue del *Policy ID* por la
+forma: el AUD son 64 caracteres hexadecimales sin guiones; el Policy ID es un
+UUID de 36 con guiones.
+
+**El despliegue actual**: dominio `casambigt.com` —registrado en Wild West
+Domains (GoDaddy) y con los nameservers apuntando a Cloudflare—, aplicación en
+`casambi.casambigt.com`, equipo `impelsa.cloudflareaccess.com`, e identidad por
+Google con la pantalla de consentimiento en modo **Interno**, que restringe el
+login al Workspace de Impelsa y evita la verificación de Google.
 
 #### Restringir a un subconjunto del dominio
 
@@ -191,7 +268,7 @@ la empresa. Se guardan cifradas en `/data/data/credentials.enc`.
 cp despliegue/copia.env.example despliegue/copia.env
 chmod 600 despliegue/copia.env   # rellenar con las claves de Backblaze
 crontab -e
-# 0 3 * * *  /home/casambi/casambi/despliegue/copia.sh >> /home/casambi/copia.log 2>&1
+# 0 3 * * *  /opt/casambi/despliegue/copia.sh >> /var/log/casambi-copia.log 2>&1
 ```
 
 **Ensayar una restauración antes de darlo por hecho.** `restaurar.sh` deja los
