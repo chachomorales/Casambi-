@@ -230,12 +230,13 @@ def test_descargar_excel(cliente):
     assert r.status_code == 200
     assert "spreadsheetml" in r.headers["Content-Type"]
 
-    # Comprobar las 11 hojas y no solo que el zip abre: el informe es el
+    # Comprobar las 12 hojas y no solo que el zip abre: el informe es el
     # producto final, y una hoja que deje de generarse pasaría inadvertida.
     wb = load_workbook(io.BytesIO(r.data))
     assert wb.sheetnames == [
         "Portada", "Red", "Conectividad", "Elementos", "Luminarias",
-        "Pulsadores", "Sensores", "Grupos", "Escenas", "Horarios", "Planos",
+        "Pulsadores", "Sensores", "Grupos", "Escenas", "Horarios", "Bitácora",
+        "Planos",
     ]
     # La hoja de conectividad debe traer las 4 unidades, no solo cabeceras.
     assert wb["Conectividad"].max_row > 10
