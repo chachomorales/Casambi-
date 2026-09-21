@@ -710,6 +710,26 @@
     });
   });
 
+  // Etiqueta de cada celda para el modo tarjeta del teléfono (ver style.css).
+  // Se copia de la cabecera en lugar de repetirla en la plantilla: así una
+  // columna nueva trae su etiqueta sola, sin tocar nada más.
+  document.querySelectorAll('.table-wrap > table').forEach(table => {
+    const cabecera = table.tHead && table.tHead.rows[0];
+    if (!cabecera || !table.tBodies[0]) return;
+    const titulos = [...cabecera.cells].map(th => th.textContent.trim());
+    [...table.tBodies[0].rows].forEach(row => {
+      if (row.cells.length !== titulos.length) return;  // fila de mensaje vacío
+      [...row.cells].forEach((td, i) => {
+        // La columna de acciones de Horarios y Bitácora va sin título: sin
+        // esto quedaría una etiqueta en blanco comiéndose un tercio de la fila.
+        if (!titulos[i]) { td.classList.add('td-sin-etiqueta'); return; }
+        td.dataset.label = titulos[i];
+        // Sub-tablas y desplegables no caben al lado de la etiqueta
+        if (td.querySelector('table, select')) td.classList.add('td-bloque');
+      });
+    });
+  });
+
   // Filtros por columna (estilo Excel) en Elementos y Luminarias
   ['tbl-elementos', 'tbl-luminarias'].forEach(tid => {
     const table = document.getElementById(tid);
@@ -988,6 +1008,50 @@
               ev.clientX - r.left, ev.clientY - r.top);
     }, { passive: false });
 
+    // ── Pellizco para ampliar (táctil) ───────────────────────────────────────
+    // Sin esto el gesto se lo quedaba el navegador y ampliaba la página entera
+    // en lugar del plano. Quien cede el gesto de dos dedos a este código es el
+    // `touch-action: pan-x pan-y` del viewport: deja el arrastre de un dedo al
+    // navegador (desplazar el plano) y nos entrega el de dos.
+    const toques = new Map();
+    let pellizco = null;
+    let finPellizco = 0;
+
+    function centroYDistancia() {
+      const [a, b] = [...toques.values()];
+      const r = viewport.getBoundingClientRect();
+      return {
+        d:  Math.hypot(a.x - b.x, a.y - b.y),
+        px: (a.x + b.x) / 2 - r.left,
+        py: (a.y + b.y) / 2 - r.top,
+      };
+    }
+
+    viewport.addEventListener('pointerdown', ev => {
+      if (ev.pointerType !== 'touch') return;
+      toques.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (toques.size === 2) pellizco = { d0: centroYDistancia().d, z0: zoom };
+    });
+
+    viewport.addEventListener('pointermove', ev => {
+      if (!toques.has(ev.pointerId)) return;
+      toques.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (!pellizco || toques.size !== 2) return;
+      ev.preventDefault();
+      const { d, px, py } = centroYDistancia();
+      if (pellizco.d0 > 0) setZoom(pellizco.z0 * (d / pellizco.d0), px, py);
+    }, { passive: false });
+
+    function soltarToque(ev) {
+      if (!toques.delete(ev.pointerId)) return;
+      // Al levantar el primer dedo se cierra el gesto y se marca la hora: el
+      // navegador manda un `click` después, y colocaría un marcador donde el
+      // usuario solo quería ampliar.
+      if (pellizco && toques.size < 2) { pellizco = null; finPellizco = Date.now(); }
+    }
+    viewport.addEventListener('pointerup', soltarToque);
+    viewport.addEventListener('pointercancel', soltarToque);
+
     function updateCount() {
       const n = canvas.querySelectorAll('.plano-marker').length;
       countEl.textContent = `${n} elemento(s) colocado(s)`;
@@ -1081,6 +1145,7 @@
     canvas.addEventListener('click', async ev => {
       if (esCobertura) return;
       if (ev.target.classList.contains('plano-marker')) return;
+      if (Date.now() - finPellizco < 400) return;  // resaca del pellizco
       const unitId = select.value;
       if (!unitId) return;
       const { x, y } = relCoords(ev);
@@ -1101,6 +1166,10 @@
       if (esCobertura) return;
       const marker = ev.target.closest('.plano-marker');
       if (!marker) return;
+      // Segundo dedo: el gesto es un pellizco, no un arrastre. `toques` aún no
+      // incluye este puntero —el viewport lo registra después, al burbujear—,
+      // así que un dedo ya presente significa que este es el segundo.
+      if (ev.pointerType === 'touch' && toques.size >= 1) return;
       ev.preventDefault();
       const unitId = marker.dataset.unit;
       select.value = unitId;
@@ -1109,6 +1178,7 @@
 
       let moved = false;
       const onMove = mv => {
+        if (pellizco) return;
         moved = true;
         const { x, y } = relCoords(mv);
         marker.style.left = (x * 100).toFixed(3) + '%';

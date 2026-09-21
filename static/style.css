@@ -750,6 +750,9 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
 
 .plano-viewport {
   overflow: auto;
+  /* Cede el gesto de dos dedos al JS —que amplía el plano— y deja el de uno al
+     navegador, que desplaza. Sin esto el pellizco ampliaba la página entera. */
+  touch-action: pan-x pan-y;
   max-height: 75vh;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1211,4 +1214,73 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   .cards { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
   .card { padding: 13px 8px; }
   .card-num { font-size: 26px; }
+
+  /* ── Tablas como tarjetas apiladas ───────────────────────────────────────
+     Con nueve o diez columnas, rodar en horizontal obliga a ir y volver para
+     leer una sola fila, y se pierde de vista de quién era el dato. Apiladas,
+     cada fila es una ficha que se lee entera de un vistazo.
+
+     Todo va con el hijo directo (`.table-wrap > table > …`) a propósito: las
+     sub-tablas de Pulsadores, Grupos y Escenas viven dentro de una celda y
+     tienen que seguir siendo tablas. */
+  .table-wrap { overflow-x: visible; }
+  .table-wrap > table > thead { display: none; }   /* y con ella los filtros por columna */
+  .table-wrap > table,
+  .table-wrap > table > tbody,
+  .table-wrap > table > tbody > tr,
+  .table-wrap > table > tbody > tr > td { display: block; width: 100%; }
+
+  .table-wrap > table > tbody > tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;                 /* si no, las celdas pisan las esquinas */
+    margin-bottom: 10px;
+    background: #fff;
+  }
+  .table-wrap > table > tbody > tr:nth-child(even) { background: var(--alt-row); }
+  .table-wrap > table > tbody > tr:hover { background: inherit; }  /* no hay hover en táctil */
+
+  .table-wrap > table > tbody > tr > td {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    max-width: none;
+    padding: 7px 10px;
+    border-bottom: 1px solid #eef3f9;
+  }
+  .table-wrap > table > tbody > tr > td:last-child { border-bottom: none; }
+
+  /* La etiqueta sale de la cabecera, que el JS copia a data-label */
+  .table-wrap > table > tbody > tr > td::before {
+    content: attr(data-label);
+    flex: 0 0 37%;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    color: var(--navy);
+  }
+
+  /* Celdas con sub-tabla o con un desplegable: la etiqueta va encima, porque
+     a lo ancho no queda sitio para las dos cosas */
+  .table-wrap > table > tbody > tr > td.td-bloque { display: block; }
+  .table-wrap > table > tbody > tr > td.td-bloque::before { display: block; margin-bottom: 6px; }
+
+  .table-wrap > table > tbody > tr > td.empty { display: block; text-align: center; }
+  .table-wrap > table > tbody > tr > td.empty::before { content: none; }
+
+  /* Centrada tiene sentido en columna; en tarjeta desalinea la etiqueta */
+  .table-wrap > table > tbody > tr > td.sched-check { text-align: left; }
+  .table-wrap > table > tbody > tr > td.sched-check input { width: 22px; height: 22px; }
+
+  /* Columna sin título (los botones de borrar de Horarios y Bitácora) */
+  .table-wrap > table > tbody > tr > td.td-sin-etiqueta { display: block; text-align: right; }
+  .table-wrap > table > tbody > tr > td.td-sin-etiqueta::before { content: none; }
+
+  .subtable { min-width: 0; width: 100%; }
+  .sched-short, .bit-fecha { max-width: none; }
+
+  /* 28px se arrastra bien con ratón y mal con el dedo */
+  .plano-marker { min-width: 34px; height: 34px; border-radius: 17px; font-size: 12px; }
+  .plano-nodo   { min-width: 34px; height: 30px; border-radius: 15px; font-size: 12px; }
 }
