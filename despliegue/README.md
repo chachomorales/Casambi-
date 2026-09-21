@@ -149,10 +149,15 @@ Dockerfile crea el usuario `casambi` (uid 1000) y gunicorn arranca con él.
 ### 2. El código y la configuración
 
 ```sh
-git clone --branch web git@github.com:chachomorales/Casambi-.git /opt/casambi
+git clone git@github.com:chachomorales/Casambi-.git /opt/casambi
 cd /opt/casambi
 cp despliegue/.env.deploy.example .env && chmod 600 .env
 ```
+
+El clon va sobre `main`, que es la rama única desde el 2026-09-20. Un servidor
+de antes de esa fecha puede seguir en la rama `web`, ya borrada: se pasa con
+`git -C /opt/casambi checkout main` una sola vez, y a partir de ahí `git pull`
+vuelve a traer cambios.
 
 El repositorio es privado, así que el servidor necesita clave propia. Se genera
 en el servidor y la pública se añade **como deploy key del repositorio**, sin

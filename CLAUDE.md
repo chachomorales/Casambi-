@@ -9,11 +9,12 @@ dentro de una ventana WKWebView. La web corre con gunicorn en un contenedor,
 detrás de Cloudflare Access. `config.py` decide cuál es cuál según `CASAMBI_MODE`,
 y `app.py` nunca se ejecuta por sí solo en ninguna de las dos.
 
-El 2026-09-20 la rama `web` se fusionó en `main` (fast-forward, sin conflictos) y
-`main` pasó a ser la rama única. Antes vivían separadas —`main` solo macOS, `web`
-todo lo demás— y un arreglo común había que pasarlo con `git cherry-pick`; ya no:
-un cambio que toque las dos versiones se hace una vez y aquí. Al tocar algo
-compartido, comprueba que sigue valiendo en los dos modos.
+El 2026-09-20 la rama `web` se fusionó en `main` (fast-forward, sin conflictos),
+se borró del remoto y el servidor se pasó a `main`, que es ya la rama única.
+Antes vivían separadas —`main` solo macOS, `web` todo lo demás— y un arreglo
+común había que pasarlo con `git cherry-pick`; ya no: un cambio que toque las
+dos versiones se hace una vez y aquí. Al tocar algo compartido, comprueba que
+sigue valiendo en los dos modos.
 
 ## Arranque
 
