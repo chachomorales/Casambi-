@@ -1315,6 +1315,13 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   .table-wrap > table > tbody > tr > td.td-sin-etiqueta::before { content: none; }
 
   .subtable { min-width: 0; width: 100%; }
+  /* Los anchos fijos de `.btn-usa` (110px) y `.btn-prog` (180px) están pensados
+     para ratón; sumados no caben dentro de una ficha de teléfono, y la
+     sub-tabla de Pulsadores se salía por la derecha con el desplegable
+     «Programado» cortado contra el borde. Dentro de la ficha van fluidos. */
+  .subtable select { width: 100%; min-width: 0; }
+  .subtable thead th,
+  .subtable tbody td { padding: 6px 7px; }
   .sched-short, .bit-fecha { max-width: none; }
 
   /* 28px se arrastra bien con ratón y mal con el dedo */
