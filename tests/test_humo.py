@@ -9,6 +9,7 @@ una treintena de sitios.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -317,7 +318,8 @@ def test_los_numeros_del_nombre_se_ordenan_como_numeros():
     ]
 
 
-def test_el_desplegable_del_plano_agrupa_por_categoria(cliente, datos_limpios):
+def test_el_desplegable_del_plano_va_por_id(cliente, datos_limpios):
+    """El marcador del plano lleva el ID, así que la lista se lee por ID."""
     import io
 
     cliente.post(
@@ -326,5 +328,9 @@ def test_el_desplegable_del_plano_agrupa_por_categoria(cliente, datos_limpios):
         content_type="multipart/form-data",
     )
     html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
-    assert '<optgroup label="Luminaria">' in html
     assert 'class="plano-element-filter"' in html
+
+    # Las cuatro unidades de la red de prueba, en orden de ID y sin agrupar.
+    opciones = re.findall(r'<option value="(\d+)" data-cat=', html)
+    assert opciones == ["1", "2", "3", "4"]
+    assert "<optgroup" not in html

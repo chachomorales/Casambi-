@@ -877,6 +877,10 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "escenas": len(scenes),
         },
         "elementos": elementos,
+        # El desplegable para colocar sobre el plano va por ID y sin agrupar: el
+        # número que se lee en el marcador es el que se busca en la lista, así
+        # que cualquier otro orden obliga a traducir de un nombre a un número.
+        "elementos_por_id": sorted(elementos, key=lambda e: _clave_natural(e["id"])),
         "luminarias": luminarias,
         "sensores": sensores,
         "pulsadores": pulsadores,

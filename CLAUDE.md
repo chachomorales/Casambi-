@@ -310,9 +310,12 @@ Se muestra como aviso sin traducirlo a una causa, porque no sabemos cuál es.
 - Las listas de unidades, grupos y escenas se ordenan con `_clave_natural()`, que
   lee los números del nombre como números: «Luz 2» antes que «Luz 10». La
   interfaz y el Excel comparten esas listas, así que se ordenan una sola vez, en
-  `_build_report_context()`. El desplegable para colocar elementos sobre un
-  plano va además agrupado por categoría (`<optgroup>`) y con filtro de texto:
-  en una red de cientos de unidades era lo que más tiempo costaba.
+  `_build_report_context()`.
+- **El desplegable para colocar elementos sobre un plano va aparte y por ID**
+  (`elementos_por_id`), en una sola lista y sin agrupar: el marcador dibuja el
+  ID, así que ordenarlo por nombre obliga a traducir de un número a un nombre
+  cada vez. Lleva filtro de texto —que también mira la categoría, invisible en
+  la etiqueta pero presente en `data-cat`— y un ✓ en lo ya colocado.
 - Repositorio git privado en `git@github.com:chachomorales/Casambi-.git`, rama `main`
   (ojo al guion final del nombre). `.gitignore` deja fuera `.venv/`, `reportes/`, `.env`
   y el contenido de `data/`: son informes, planos y anotaciones de instalaciones reales
