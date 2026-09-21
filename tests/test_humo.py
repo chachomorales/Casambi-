@@ -108,6 +108,25 @@ def test_refresh_ya_no_acepta_get(cliente):
     assert cliente.get(f"/network/{RED_ID}/refresh").status_code == 405
 
 
+def test_refresh_de_la_lista_olvida_las_redes_pero_no_la_cache(cliente):
+    """
+    El botón de la barra lateral responde a «¿hay una red nueva?».
+
+    Lo caro es la descarga de cada red, así que rehacer la lista no puede
+    llevarse por delante lo que el equipo ya tiene cargado.
+    """
+    import app as app_module
+
+    r = cliente.post("/redes/refresh")
+    assert r.status_code == 302
+    assert app_module._state["networks"] is None
+    assert RED_ID in app_module._state["cache"]
+
+
+def test_refresh_de_la_lista_no_acepta_get(cliente):
+    assert cliente.get("/redes/refresh").status_code == 405
+
+
 # ── Anotaciones del usuario ───────────────────────────────────────────────────
 
 def test_guardar_nivel_de_escena(cliente, datos_limpios):

@@ -1017,6 +1017,23 @@ def index():
     )
 
 
+@app.route("/redes/refresh", methods=["POST"])
+def networks_refresh():
+    """
+    Olvida la lista de redes; index() vuelve a autenticar con barra de progreso.
+
+    Solo la lista: las descargas de cada red (`cache`) son lo caro, y para eso
+    está el Actualizar de la red. Este botón responde a otra pregunta —«¿hay
+    una red nueva?»—, y hasta ahora solo se podía contestar reiniciando.
+
+    POST por lo mismo que `network_refresh`: como GET, una imagen remota en un
+    correo obligaría a toda la oficina a autenticarse de nuevo.
+    """
+    with _state_lock:
+        _state["networks"] = None
+    return redirect(url_for("index"))
+
+
 def _pantalla_carga(titulo: str, destino: str, task_id: str):
     """
     Página con barra de progreso mientras la carga corre en segundo plano.

@@ -37,6 +37,9 @@ def _token_de(html: str) -> str:
     ("/ajustes/cuentas", {"label": "X", "api_key": "k",
                           "email": "a@b.c", "password": "p"}),
     ("/ajustes/cuentas/cuenta1", {"accion": "borrar"}),
+    # Rehacer la lista reautentica todas las cuentas: sin token, una página
+    # ajena podría obligar a ello una y otra vez.
+    ("/redes/refresh", {}),
 ])
 def test_formularios_sin_token_se_rechazan(cli, ruta, datos):
     assert cli.post(ruta, data=datos).status_code == 400

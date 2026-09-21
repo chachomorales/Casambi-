@@ -15,7 +15,15 @@
       <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="brand-logo">
     </div>
 
-    <div class="sidebar-section">Redes Casambi</div>
+    <div class="sidebar-section">
+      <span>Redes Casambi</span>
+      {# Como el de cada red: formulario y no enlace, porque rehacer la lista
+         reautentica todas las cuentas. #}
+      <form method="post" action="{{ url_for('networks_refresh') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="sidebar-refresh" title="Buscar redes nuevas">↻</button>
+      </form>
+    </div>
     <nav class="sidebar-nav">
       {% if networks %}
         {% for net in networks %}
