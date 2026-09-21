@@ -149,13 +149,16 @@ saber al tocar el código:
   personas en la misma red comparten una sola descarga porque comparten clave.
 - **Ante la duda, `auth.py` cierra.** Si no se puede consultar el JWKS de
   Cloudflare, la respuesta es 503, nunca un 200.
-- **La hora del proceso no vale: el servidor está en Alemania.** Todo lo que la
-  app fecha por su cuenta —bitácora, portada del Excel, hoja Conectividad,
-  nombre del fichero— sale de `config.ahora()`, que devuelve la hora de
-  Guatemala (`CASAMBI_TZ` la cambia). Nunca uses `datetime.now()` para algo que
-  vaya a leer una persona. La imagen instala `tzdata` para que `zoneinfo`
-  resuelva la zona; sin ella se cae a un desfase fijo de −06:00, correcto
-  porque Guatemala no aplica horario de verano, pero solo como respaldo.
+- **La hora del proceso no vale: el contenedor corre en UTC.** La máquina está
+  en Núremberg, pero el reloj del contenedor es UTC, así que el desfase con
+  Guatemala es de 6 horas, no de 8 —conviene saberlo si alguna vez hay que
+  reparar fechas viejas a mano—. Todo lo que la app fecha por su cuenta
+  —bitácora, portada del Excel, hoja Conectividad, nombre del fichero— sale de
+  `config.ahora()`, que devuelve la hora de Guatemala (`CASAMBI_TZ` la cambia).
+  Nunca uses `datetime.now()` para algo que vaya a leer una persona. La imagen
+  instala `tzdata` para que `zoneinfo` resuelva la zona; sin ella se cae a un
+  desfase fijo de −06:00, correcto porque Guatemala no aplica horario de
+  verano, pero solo como respaldo.
 
 ## Estructura
 
