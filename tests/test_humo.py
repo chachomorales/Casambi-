@@ -76,6 +76,40 @@ def test_logos_se_sirven(cliente):
     assert cliente.get("/logos/impelsa_logo.png").status_code == 200
 
 
+def test_manifiesto_y_iconos(cliente):
+    """«Añadir a pantalla de inicio» necesita las tres piezas a la vez.
+
+    El tipo MIME importa: con `application/json` a secas, iOS ignora el
+    manifiesto y el icono acaba siendo un marcador normal, sin avisar.
+    """
+    r = cliente.get("/manifest.webmanifest")
+    assert r.status_code == 200
+    assert r.mimetype == "application/manifest+json"
+
+    datos = r.get_json()
+    assert datos["display"] == "standalone"
+    assert datos["start_url"] == "/" and datos["scope"] == "/"
+    # Android exige una variante `maskable`; sin ella el icono sale recortado
+    assert {i["purpose"] for i in datos["icons"]} == {"any", "maskable"}
+
+    for icono in datos["icons"]:
+        assert cliente.get(icono["src"]).status_code == 200
+
+    # El icono de iOS lo pone `apple-touch-icon`, no el manifiesto
+    html = cliente.get("/").get_data(as_text=True)
+    assert 'rel="apple-touch-icon"' in html
+    assert 'rel="manifest"' in html
+    assert cliente.get("/static/iconos/apple-touch-icon.png").status_code == 200
+
+
+def test_el_manifiesto_es_ruta_libre():
+    """Si respondiera 403, iOS degradaría a marcador sin decir nada."""
+    import auth
+
+    assert auth.es_ruta_libre("/manifest.webmanifest")
+    assert not auth.es_ruta_libre("/network/loquesea")
+
+
 def test_la_hoja_de_estilos_lleva_huella(cliente):
     """La URL del CSS cambia con el fichero.
 

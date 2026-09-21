@@ -29,9 +29,15 @@ import config
 CABECERA = "Cf-Access-Jwt-Assertion"
 COOKIE = "CF_Authorization"
 
-# Rutas públicas. Son CSS, logos y el latido del contenedor: ni datos de
-# clientes ni acciones. Todo lo demás exige JWT válido.
-RUTAS_LIBRES = ("/static/", "/logos/", "/salud")
+# Rutas públicas. Son CSS, logos, el latido del contenedor y el manifiesto de
+# la aplicación: ni datos de clientes ni acciones. Todo lo demás exige JWT
+# válido.
+#
+# El manifiesto entra en esta lista porque, si respondiera 403 en el momento en
+# que iOS lo pide, «Añadir a pantalla de inicio» degradaría a un marcador
+# normal sin decir nada, y ese es justo el tipo de fallo mudo que no queremos.
+# Su contenido es el nombre de la app, sus colores y las rutas de los iconos.
+RUTAS_LIBRES = ("/static/", "/logos/", "/salud", "/manifest.webmanifest")
 
 # Margen para desfases de reloj entre Cloudflare y el servidor.
 _HOLGURA_SEGUNDOS = 30

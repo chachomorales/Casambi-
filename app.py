@@ -1751,3 +1751,40 @@ def scene_capture(network_id, scene_id):
 @app.route("/logos/<path:filename>")
 def logos(filename):
     return send_from_directory(LOGOS_DIR, filename)
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    """Manifiesto para «Añadir a pantalla de inicio» en iPad y iPhone.
+
+    Va como ruta y no como fichero suelto en `static/` por dos razones: las
+    rutas de los iconos salen de `url_for`, y el tipo MIME correcto
+    (`application/manifest+json`) no se deduce de la extensión en todas las
+    plataformas.
+
+    Los iconos van a sangre, sin esquinas redondeadas ni transparencia: iOS y
+    Android aplican su propia máscara. La marca ocupa el 62 % del lado, dentro
+    del círculo seguro del 80 % que exige `maskable`, así que la misma imagen
+    sirve para los dos usos.
+    """
+    resp = jsonify({
+        "name": "CASAMBI — Informes de red",
+        "short_name": "Casambi",
+        "description": "Informes de redes de iluminación Casambi.",
+        "lang": "es",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#F4F7FB",   # --bg, para la pantalla de arranque
+        "theme_color": "#1F3864",        # --navy
+        "icons": [
+            {"src": url_for("static", filename="iconos/icono-192.png"),
+             "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": url_for("static", filename="iconos/icono-512.png"),
+             "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": url_for("static", filename="iconos/icono-512.png"),
+             "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    })
+    resp.mimetype = "application/manifest+json"
+    return resp

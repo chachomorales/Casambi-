@@ -7,6 +7,19 @@
      para sus llamadas fetch. #}
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}Informes Casambi{% endblock %}</title>
+
+  {# «Añadir a pantalla de inicio»: se abre sin la barra de Safari. El icono de
+     iOS lo pone `apple-touch-icon`, no el manifiesto. `status-bar-style` en
+     `default` deja la barra de estado como una franja aparte, que es lo que
+     espera la cabecera blanca de la app. #}
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="apple-touch-icon" href="{{ estatico('iconos/apple-touch-icon.png') }}">
+  <meta name="theme-color" content="#1F3864">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Casambi">
+
   <link rel="stylesheet" href="{{ estatico('style.css') }}">
 </head>
 <body>
