@@ -25,7 +25,13 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 225 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 228 tests, ~7 s
+
+# Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
+# test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
+# propósito para que PyInstaller no las meta en el .app. Los otros 192:
+.venv/bin/python -m pytest tests/ -q \
+  --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
 # empaquetar — SIEMPRE fuera del proyecto (ver más abajo), y luego instalar
 .venv/bin/pyinstaller CASAMBI.spec --noconfirm --distpath /tmp/casambi-dist --workpath /tmp/casambi-build
@@ -152,7 +158,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 225 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 228 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
