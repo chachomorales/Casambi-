@@ -1776,7 +1776,9 @@ def manifest():
         "scope": "/",
         "display": "standalone",
         "background_color": "#F4F7FB",   # --bg, para la pantalla de arranque
-        "theme_color": "#1F3864",        # --navy
+        # Blanco, el mismo de la barra superior: tiñe la barra del navegador y
+        # así no se ve costura entre el navegador y la cabecera de la app.
+        "theme_color": "#FFFFFF",
         "icons": [
             {"src": url_for("static", filename="iconos/icono-192.png"),
              "sizes": "192x192", "type": "image/png", "purpose": "any"},
