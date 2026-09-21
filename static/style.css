@@ -625,6 +625,17 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
 .plano-rename.saved { border-color: var(--green); box-shadow: 0 0 0 2px rgba(112,173,71,.25); }
 .plano-rename.save-error { border-color: #b3261e; }
 
+.plano-element-filter {
+  width: 150px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  outline: none;
+}
+.plano-element-filter:focus { border-color: var(--blue); }
+
 .plano-element-select {
   flex: 1;
   min-width: 240px;

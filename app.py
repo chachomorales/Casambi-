@@ -222,7 +222,7 @@ def _read_json(path: Path, vacio):
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         respaldo = path.with_name(
-            f"{path.name}.corrupto-{datetime.now():%Y%m%d-%H%M%S}"
+            f"{path.name}.corrupto-{config.ahora():%Y%m%d-%H%M%S}"
         )
         try:
             path.rename(respaldo)
@@ -368,7 +368,7 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
         "network": network,
         "state": state,
         "fixtures": fixtures,
-        "fetched_at": datetime.now(),
+        "fetched_at": config.ahora(),
     }
     with _state_lock:
         _state["cache"][str(network_id)] = data
@@ -640,7 +640,8 @@ def _tecnico() -> str:
 
 
 def _ahora() -> str:
-    return datetime.now().strftime(_BITACORA_FMT)
+    # La hora de Guatemala, no la del servidor: ver config.ahora().
+    return config.ahora().strftime(_BITACORA_FMT)
 
 
 def _bitacora_anotar(network_id: str, tipo: str, descripcion: str) -> None:
@@ -668,7 +669,7 @@ def _bitacora_anotar(network_id: str, tipo: str, descripcion: str) -> None:
                 except ValueError:
                     creada = None
                 if creada is not None and (
-                        datetime.now() - creada).total_seconds() <= BITACORA_FUSION_MINUTOS * 60:
+                        config.ahora() - creada).total_seconds() <= BITACORA_FUSION_MINUTOS * 60:
                     ultima["veces"] = int(ultima.get("veces", 1)) + 1
                     ultima["fecha"] = ahora
                     _write_json(_bitacora_path(network_id), items)
@@ -718,6 +719,19 @@ def _is_pulsador(u: dict) -> bool:
     ]
 
 
+def _clave_natural(texto) -> list:
+    """
+    Clave de orden que lee los números como números: «Luz 2» antes que «Luz 10».
+
+    Casi todos los nombres de una instalación acaban en un número correlativo, y
+    el orden alfabético los baraja justo donde más estorba: el desplegable con
+    el que se colocan los elementos sobre el plano, que en una red grande pasa
+    de cien entradas y se recorre a ojo.
+    """
+    return [(0, int(t)) if t.isdigit() else (1, t.casefold())
+            for t in re.split(r"(\d+)", str(texto)) if t]
+
+
 def _build_report_context(network_id: str, data: dict) -> dict:
     network = data["network"]
     fixtures = data["fixtures"]
@@ -749,13 +763,16 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "controls": _fixture_controls_summary(fixture) or _controls_summary(u) or "-",
         }
 
-    elementos = sorted((enrich(u) for u in units), key=lambda e: (e["category"], e["name"]))
+    elementos = sorted((enrich(u) for u in units),
+                       key=lambda e: (e["category"], _clave_natural(e["name"])))
     luminarias = sorted(
         (enrich(u) for u in units if _is_luminaria(u)),
-        key=lambda e: (e["group"], e["name"]),
+        key=lambda e: (_clave_natural(e["group"]), _clave_natural(e["name"])),
     )
-    sensores = sorted((enrich(u) for u in units if _is_sensor(u)), key=lambda e: e["name"])
-    pulsadores = sorted((enrich(u) for u in units if _is_pulsador(u)), key=lambda e: e["name"])
+    sensores = sorted((enrich(u) for u in units if _is_sensor(u)),
+                      key=lambda e: _clave_natural(e["name"]))
+    pulsadores = sorted((enrich(u) for u in units if _is_pulsador(u)),
+                        key=lambda e: _clave_natural(e["name"]))
 
     # Configuración anotada de cada sensor
     sensor_cfg = _load_sensors(str(network_id))
@@ -796,9 +813,10 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "id": g.get("id"),
             "name": g.get("name", "-"),
             "count": len(group_units.get(g.get("id"), [])),
-            "devices": sorted(group_units.get(g.get("id"), []), key=lambda d: d["name"]),
+            "devices": sorted(group_units.get(g.get("id"), []),
+                              key=lambda d: _clave_natural(d["name"])),
         }
-        for g in sorted(groups, key=lambda g: g.get("name", ""))
+        for g in sorted(groups, key=lambda g: _clave_natural(g.get("name", "")))
     ]
 
     # Escenas con sus dispositivos e intensidades anotadas
@@ -817,7 +835,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
                 }
                 for i in ids if i is not None
             ),
-            key=lambda d: d["name"],
+            key=lambda d: _clave_natural(d["name"]),
         )
         escenas.append({
             "id": s.get("id", "-"),

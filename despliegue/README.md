@@ -185,6 +185,11 @@ python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 > del servidor.** Sin ella no se pueden descifrar las credenciales de Casambi, ni
 > las del servidor ni las de una copia de seguridad.
 
+`CASAMBI_TZ` es opcional y vale `America/Guatemala` si no se pone: es la zona con
+la que se fechan la bitácora y los informes. El reloj del servidor puede seguir
+en UTC o en la hora de Alemania —la app no lo mira—, pero si algún día el equipo
+trabaja desde otro país, esta es la variable que hay que cambiar.
+
 ### 3. Cloudflare
 
 **El dominio de la app y el de las identidades son independientes.** La app vive

@@ -539,10 +539,19 @@
         {{ cob.ancho_m }} × {{ cob.alto_m }} m
       </span>
       {% else %}
+      <input type="search" class="plano-element-filter" placeholder="Filtrar elementos…"
+             title="Escribe parte del nombre, del ID o de la categoría">
+      {# Agrupados por categoría y ordenados por nombre (orden natural, en app.py):
+         el desplegable de una red grande se recorre a ojo, y buscar una luminaria
+         entre cientos sueltas era lo que más tiempo se llevaba al colocar. #}
       <select class="plano-element-select">
         <option value="">— Elige un elemento y haz clic en el plano —</option>
-        {% for e in elementos %}
-        <option value="{{ e.id }}">{{ e.id }} — {{ e.name }} ({{ e.category }})</option>
+        {% for categoria, items in elementos|groupby('category') %}
+        <optgroup label="{{ categoria }}">
+          {% for e in items %}
+          <option value="{{ e.id }}">{{ e.name }} · #{{ e.id }}</option>
+          {% endfor %}
+        </optgroup>
         {% endfor %}
       </select>
       <button class="plano-marker-del" disabled>✕ Quitar del plano</button>
@@ -990,6 +999,56 @@
       return canvas.querySelector(`.plano-marker[data-unit="${unitId}"]`);
     }
 
+    // ── Desplegable de elementos: filtro y marca de lo ya colocado ────────────
+    // El orden y las categorías los pone el servidor; aquí solo se recorta la
+    // lista a lo que se escribe y se señala con ✓ lo que ya está en el plano,
+    // que es lo que evita pasearse dos veces por la misma luminaria.
+    const filtro = block.querySelector('.plano-element-filter');
+    const OPCIONES = esCobertura ? [] :
+      Array.from(select.querySelectorAll('option')).filter(o => o.value).map(o => ({
+        id: o.value,
+        etiqueta: o.textContent.trim(),
+        grupo: (o.parentElement.label || ''),
+      }));
+
+    function pintarOpciones() {
+      if (esCobertura) return;
+      const q = (filtro.value || '').trim().toLowerCase();
+      const elegido = select.value;
+      const frag = document.createDocumentFragment();
+      const vacia = document.createElement('option');
+      vacia.value = '';
+      vacia.textContent = '— Elige un elemento y haz clic en el plano —';
+      frag.appendChild(vacia);
+
+      let grupoActual = null, contenedor = null, visibles = 0;
+      OPCIONES.forEach(o => {
+        // Lo seleccionado nunca se esconde: filtrar no debe deshacer la elección.
+        const texto = (o.etiqueta + ' ' + o.grupo).toLowerCase();
+        if (q && o.id !== elegido && !texto.includes(q)) return;
+        if (o.grupo !== grupoActual) {
+          grupoActual = o.grupo;
+          contenedor = document.createElement('optgroup');
+          contenedor.label = grupoActual;
+          frag.appendChild(contenedor);
+        }
+        const op = document.createElement('option');
+        op.value = o.id;
+        op.textContent = (markerOf(o.id) ? '✓ ' : '') + o.etiqueta;
+        contenedor.appendChild(op);
+        visibles++;
+      });
+      if (!visibles) vacia.textContent = '— Ningún elemento coincide —';
+
+      select.innerHTML = '';
+      select.appendChild(frag);
+      select.value = elegido;
+    }
+
+    if (!esCobertura && filtro) {
+      filtro.addEventListener('input', pintarOpciones);
+    }
+
     function syncDelBtn() {
       delBtn.disabled = !(select.value && markerOf(select.value));
     }
@@ -1039,6 +1098,7 @@
         selectMarker(unitId);
         updateCount();
         syncDelBtn();
+        pintarOpciones();
       } catch (e) { alert('No se pudo guardar el marcador: ' + e.message); }
     });
 
@@ -1092,6 +1152,7 @@
           m.remove();
           updateCount();
           syncDelBtn();
+          pintarOpciones();
         } catch (e) { alert('No se pudo quitar el marcador: ' + e.message); }
       });
     }
@@ -1140,7 +1201,7 @@
       } catch (e) { alert('No se pudo eliminar el plano: ' + e.message); }
     });
 
-    if (!esCobertura) syncDelBtn();
+    if (!esCobertura) { pintarOpciones(); syncDelBtn(); }
   });
 
   // Capturar niveles: activa la escena real y lee el dimLevel de las luminarias

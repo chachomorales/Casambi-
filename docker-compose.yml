@@ -16,6 +16,9 @@ services:
       CASAMBI_ACCESS_TEAM_DOMAIN: ${CASAMBI_ACCESS_TEAM_DOMAIN:?falta en .env}
       CASAMBI_ACCESS_AUD: ${CASAMBI_ACCESS_AUD:?falta en .env}
       CASAMBI_ACCESS_EMAILS: ${CASAMBI_ACCESS_EMAILS:-}
+      # El servidor está en Alemania y el equipo en Guatemala: sin esto la
+      # bitácora y los informes se fecharían con la hora del centro de datos.
+      CASAMBI_TZ: ${CASAMBI_TZ:-America/Guatemala}
 
   cloudflared:
     image: cloudflare/cloudflared:latest

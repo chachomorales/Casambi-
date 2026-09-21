@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 228 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 232 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 192:
+# propósito para que PyInstaller no las meta en el .app. Los otros 196:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -149,6 +149,13 @@ saber al tocar el código:
   personas en la misma red comparten una sola descarga porque comparten clave.
 - **Ante la duda, `auth.py` cierra.** Si no se puede consultar el JWKS de
   Cloudflare, la respuesta es 503, nunca un 200.
+- **La hora del proceso no vale: el servidor está en Alemania.** Todo lo que la
+  app fecha por su cuenta —bitácora, portada del Excel, hoja Conectividad,
+  nombre del fichero— sale de `config.ahora()`, que devuelve la hora de
+  Guatemala (`CASAMBI_TZ` la cambia). Nunca uses `datetime.now()` para algo que
+  vaya a leer una persona. La imagen instala `tzdata` para que `zoneinfo`
+  resuelva la zona; sin ella se cae a un desfase fijo de −06:00, correcto
+  porque Guatemala no aplica horario de verano, pero solo como respaldo.
 
 ## Estructura
 
@@ -156,9 +163,9 @@ saber al tocar el código:
 |---|---|
 | `desktop.py` | Lanzador de escritorio: puerto libre, hilo Flask, ventana pywebview. Prepara `CASAMBI_HOME` y fija `CASAMBI_MODE=desktop` |
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
-| `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies |
+| `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 228 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 232 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -300,6 +307,12 @@ Se muestra como aviso sin traducirlo a una causa, porque no sabemos cuál es.
   explican *por qué*, no *qué* — mantén ese registro.
 - La paleta del Excel está centralizada arriba de `report.py` (`COLOR_*`); no metas
   colores literales en las funciones de hoja.
+- Las listas de unidades, grupos y escenas se ordenan con `_clave_natural()`, que
+  lee los números del nombre como números: «Luz 2» antes que «Luz 10». La
+  interfaz y el Excel comparten esas listas, así que se ordenan una sola vez, en
+  `_build_report_context()`. El desplegable para colocar elementos sobre un
+  plano va además agrupado por categoría (`<optgroup>`) y con filtro de texto:
+  en una red de cientos de unidades era lo que más tiempo costaba.
 - Repositorio git privado en `git@github.com:chachomorales/Casambi-.git`, rama `main`
   (ojo al guion final del nombre). `.gitignore` deja fuera `.venv/`, `reportes/`, `.env`
   y el contenido de `data/`: son informes, planos y anotaciones de instalaciones reales

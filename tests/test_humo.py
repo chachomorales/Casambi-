@@ -9,9 +9,12 @@ una treintena de sitios.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import app as app_module
+import config
 from conftest import RED_ID
 
 
@@ -282,3 +285,46 @@ def test_capturar_escena_inexistente(cliente, monkeypatch):
     monkeypatch.setattr("app.time.sleep", lambda _s: None)
     r = cliente.post(f"/network/{RED_ID}/scenes/999/capture")
     assert r.status_code == 404
+
+
+# ── Fecha local y orden de los elementos ──────────────────────────────────────
+
+def test_la_hora_es_la_de_guatemala_no_la_del_servidor(monkeypatch):
+    """El servidor web está en Alemania; lo que la app fecha va en hora local."""
+    monkeypatch.delenv("CASAMBI_TZ", raising=False)
+    desfase = config.ahora() - datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs(desfase + timedelta(hours=6)) < timedelta(minutes=1)
+
+
+def test_la_bitacora_se_fecha_en_la_zona_configurada(cliente, datos_limpios,
+                                                     monkeypatch):
+    # Una zona lejana y sin horario de verano: si la entrada se fechara con el
+    # reloj del proceso, la diferencia sería de horas y el test caería.
+    monkeypatch.setenv("CASAMBI_TZ", "Asia/Tokyo")
+    r = cliente.post(f"/network/{RED_ID}/bitacora", json={"action": "create"})
+    assert r.status_code == 200
+
+    entrada = json.loads((datos_limpios / f"bitacora_{RED_ID}.json").read_text())[0]
+    guardada = datetime.strptime(entrada["fecha"], "%Y-%m-%dT%H:%M")
+    esperada = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=9)
+    assert abs(guardada - esperada) < timedelta(minutes=2)
+
+
+def test_los_numeros_del_nombre_se_ordenan_como_numeros():
+    nombres = ["Luz 10", "Luz 2", "Luz 1", "Bodega 3", "luz 3"]
+    assert sorted(nombres, key=app_module._clave_natural) == [
+        "Bodega 3", "Luz 1", "Luz 2", "luz 3", "Luz 10",
+    ]
+
+
+def test_el_desplegable_del_plano_agrupa_por_categoria(cliente, datos_limpios):
+    import io
+
+    cliente.post(
+        f"/network/{RED_ID}/planos/upload",
+        data={"file": (io.BytesIO(_png_de_prueba()), "planta.png")},
+        content_type="multipart/form-data",
+    )
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert '<optgroup label="Luminaria">' in html
+    assert 'class="plano-element-filter"' in html

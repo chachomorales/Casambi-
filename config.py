@@ -8,6 +8,9 @@ viven las credenciales, si hay que autenticar al visitante y si las cookies
 pueden exigir HTTPS—, concentradas aquí para no repartir condicionales de modo
 por todo `app.py`.
 
+Vive aquí también la zona horaria con que se fecha todo: no depende del modo,
+pero existe porque el servidor no está donde está el equipo.
+
 Nada de este módulo importa `app`: se lee en tiempo de import, antes que él.
 """
 
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 
@@ -91,6 +95,48 @@ def clave_secreta() -> bytes:
     if ES_ESCRITORIO:
         return os.urandom(24)
     raise ConfigError(_AYUDA_CLAVE)
+
+
+# ── Zona horaria ──────────────────────────────────────────────────────────────
+# El servidor está en Alemania, pero quien trabaja las redes y quien lee los
+# informes están en Guatemala: una bitácora fechada con la hora del centro de
+# datos hace dudar de a qué jornada pertenece cada entrada, y en verano el
+# desfase es de ocho horas, suficiente para cambiar el día. Todo lo que la app
+# fecha por su cuenta pasa por `ahora()`; el escritorio queda igual, porque su
+# reloj ya es el de aquí.
+
+ZONA_POR_DEFECTO = "America/Guatemala"
+
+# Guatemala no aplica horario de verano desde 2006, así que un desfase fijo es
+# un sustituto honesto cuando la imagen del contenedor viene sin base de datos
+# de zonas. Solo se usa para la zona por defecto: una zona pedida a mano que no
+# exista es un error de configuración, y se dice.
+_RESPALDO_GUATEMALA = timezone(timedelta(hours=-6), "-06")
+
+
+def zona_horaria() -> tzinfo:
+    """Zona en la que la app fecha lo que escribe. CASAMBI_TZ la cambia."""
+    nombre = (os.environ.get("CASAMBI_TZ") or "").strip() or ZONA_POR_DEFECTO
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(nombre)
+    except Exception:
+        if nombre == ZONA_POR_DEFECTO:
+            return _RESPALDO_GUATEMALA
+        raise ConfigError(
+            f"CASAMBI_TZ no reconoce «{nombre}»: usa un nombre de la base de "
+            "datos de zonas (p. ej. America/Guatemala)."
+        )
+
+
+def ahora() -> datetime:
+    """La hora local, sin tzinfo.
+
+    Se devuelve ingenua a propósito: es lo que esperan los `datetime-local` de
+    la interfaz y el formato con que ya está escrita la bitácora en disco, y
+    así comparar dos marcas propias sigue siendo una resta directa.
+    """
+    return datetime.now(zona_horaria()).replace(tzinfo=None)
 
 
 # ── Cloudflare Access ─────────────────────────────────────────────────────────

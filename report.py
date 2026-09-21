@@ -10,7 +10,6 @@ import io
 import re
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -24,6 +23,8 @@ from openpyxl.styles import (
     Side,
 )
 from openpyxl.utils import get_column_letter
+
+import config
 
 LOGOS_DIR = Path(__file__).parent / "logos"
 
@@ -474,7 +475,7 @@ def _sheet_portada(wb: Workbook, network: dict, state: dict) -> None:
         (9,  "Site:",   network.get("site_name", "-")),
         (10, "Tipo:",   network.get("type", "-")),
         (11, "Grado:",  network.get("grade", "-")),
-        (12, "Fecha:",  datetime.now().strftime("%d/%m/%Y %H:%M")),
+        (12, "Fecha:",  config.ahora().strftime("%d/%m/%Y %H:%M")),
     ]
     for r, label, value in info_rows:
         row_height(r, 20)
@@ -581,7 +582,7 @@ def _sheet_red(wb: Workbook, network: dict, state: dict) -> None:
     rows = [
         ("Nombre de Red",          network.get("name", "-")),
         ("Tipo de Red",            network.get("type", "-")),
-        ("Fecha del Informe",      datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("Fecha del Informe",      config.ahora().strftime("%d/%m/%Y %H:%M")),
         (None, None),
         ("RESUMEN DE ELEMENTOS", None),
         ("Total de Dispositivos",  len(units)),
@@ -664,7 +665,7 @@ def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
 
     _dato(2, "Red", network.get("name", "-"))
     _dato(3, "Gateway configurado", diag["gateway"] or "— ninguno —")
-    _dato(4, "Lectura tomada", datetime.now().strftime("%d/%m/%Y %H:%M"))
+    _dato(4, "Lectura tomada", config.ahora().strftime("%d/%m/%Y %H:%M"))
 
     # Veredicto de la red: lo primero que hay que leer antes de mirar la tabla
     _FILL_NIVEL = {
@@ -1666,7 +1667,7 @@ def _nombre_informe(net_name: str | None) -> str:
     """
     limpio = re.sub(r"[^\w.-]+", "_", (net_name or "red").strip()).strip("_.")
     limpio = (limpio or "red")[:60]
-    marca = datetime.now().strftime("%Y%m%d_%H%M%S")
+    marca = config.ahora().strftime("%Y%m%d_%H%M%S")
     return f"Casambi_{limpio}_{marca}_{uuid.uuid4().hex[:6]}.xlsx"
 
 

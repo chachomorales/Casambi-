@@ -4,8 +4,10 @@ FROM python:3.12-slim-bookworm
 # nombre para numerar los marcadores de los planos, y sin ella Pillow cae a su
 # fuente de mapa de bits y los números salen ilegibles en el Excel.
 # tini reparte las señales, para que gunicorn pare limpio en un redespliegue.
+# tzdata la necesita `config.zona_horaria()`: el servidor está en Alemania y sin
+# base de datos de zonas la app caería al desfase fijo de respaldo.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates fonts-dejavu-core tini \
+ && apt-get install -y --no-install-recommends ca-certificates fonts-dejavu-core tini tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
