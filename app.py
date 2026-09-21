@@ -81,6 +81,22 @@ auth.proteger(app)
 # cuentas de Casambi, o subiera planos, sin que él se enterase.
 _csrf = CSRFProtect(app)
 
+# ── Estáticos con huella ──────────────────────────────────────────────────────
+# La URL lleva la fecha del fichero, así que cambia cada vez que se toca la
+# hoja de estilos. No es una optimización: el 2026-09-20, tras desplegar la
+# interfaz para móvil, Safari sirvió la plantilla nueva con el CSS viejo de su
+# caché —Chrome sí revalidó— y salía un segundo logotipo, que es la barra
+# superior sin sus estilos. Con la URL versionada el navegador no puede
+# emparejar una plantilla con una hoja que no le corresponde.
+@app.template_global("estatico")
+def estatico(filename: str) -> str:
+    try:
+        marca = int((Path(app.static_folder) / filename).stat().st_mtime)
+    except OSError:
+        return url_for("static", filename=filename)
+    return url_for("static", filename=filename, v=marca)
+
+
 LOGOS_DIR = Path(__file__).parent / "logos"
 REPORTS_DIR = _HOME / "reportes"
 DATA_DIR = _HOME / "data"

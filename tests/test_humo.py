@@ -76,6 +76,33 @@ def test_logos_se_sirven(cliente):
     assert cliente.get("/logos/impelsa_logo.png").status_code == 200
 
 
+def test_la_hoja_de_estilos_lleva_huella(cliente):
+    """La URL del CSS cambia con el fichero.
+
+    Sin esto, el 2026-09-20 Safari sirvió la plantilla nueva con la hoja vieja
+    de su caché y salía un segundo logotipo: la barra superior sin estilos.
+    """
+    import os
+    import time
+
+    ruta = os.path.join(app_module.app.static_folder, "style.css")
+
+    def version():
+        html = cliente.get("/").get_data(as_text=True)
+        m = re.search(r"style\.css\?v=(\d+)", html)
+        assert m, "la hoja de estilos se enlaza sin versión"
+        return m.group(1)
+
+    antes = version()
+    original = os.stat(ruta)
+    try:
+        os.utime(ruta, (original.st_atime, original.st_mtime + 10))
+        assert version() != antes
+    finally:
+        os.utime(ruta, (original.st_atime, original.st_mtime))
+    assert version() == antes
+
+
 # ── Cuentas ───────────────────────────────────────────────────────────────────
 
 def test_crear_cuenta(cliente, credenciales):
