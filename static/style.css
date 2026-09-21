@@ -57,18 +57,38 @@ body {
 }
 .topbar-logo { max-width: 120px; height: auto; }
 
-/* 44x44: el mínimo táctil que pide Apple. El padding lateral deja las barras
-   más estrechas que la zona sensible, que es lo que se quiere. */
+/* Con las rayas solas no se adivinaba que detrás estaba la lista de redes, así
+   que el botón se dibuja como botón y lleva rótulo y cuenta. 44px de alto es el
+   mínimo táctil que pide Apple. */
+.nav-menu {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  flex-shrink: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.nav-menu:hover { background: var(--pale); border-color: var(--blue); }
+.nav-menu-texto {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: .3px;
+}
+
 .nav-burger {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 5px;
-  width: 44px;
-  height: 44px;
-  padding: 0 9px;
+  width: 18px;
+  height: 16px;
   flex-shrink: 0;
-  cursor: pointer;
 }
 .nav-burger span {
   display: block;
@@ -81,6 +101,7 @@ body {
 .nav-toggle:checked ~ .topbar .nav-burger span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
 .nav-toggle:checked ~ .topbar .nav-burger span:nth-child(2) { opacity: 0; }
 .nav-toggle:checked ~ .topbar .nav-burger span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+.nav-toggle:checked ~ .topbar .nav-menu { background: var(--pale); border-color: var(--blue); }
 
 @media (prefers-reduced-motion: reduce) {
   .nav-burger span { transition: none; }
@@ -1138,10 +1159,9 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .nav-toggle:focus-visible ~ .topbar .nav-burger {
+  .nav-toggle:focus-visible ~ .topbar .nav-menu {
     outline: 2px solid var(--blue);
     outline-offset: 2px;
-    border-radius: 6px;
   }
 
   /* Plegada por omisión: apilarla entera dejaba el contenido fuera de pantalla */
@@ -1169,6 +1189,23 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab { flex: 0 0 auto; scroll-snap-align: start; }
+
+  /* Degradado en el lado por el que queda fila. Va con máscara y no con un
+     ::after porque el pseudo-elemento rodaría con el contenido y se iría. */
+  .tabs.tabs-mas-der {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent);
+  }
+  .tabs.tabs-mas-izq {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent);
+            mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent);
+  }
+  .tabs.tabs-mas-izq.tabs-mas-der {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 34px,
+                                        #000 calc(100% - 34px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 34px,
+                                        #000 calc(100% - 34px), transparent);
+  }
 
   /* dvh y no vh: con vh el plano queda tapado por la barra de Safari */
   .plano-viewport { max-height: 70vh; max-height: 70dvh; }

@@ -662,6 +662,27 @@
     activateTab(initialTab);
   }
 
+  // En pantalla estrecha las pestañas van en una fila que rueda, y cortadas al
+  // borde parecía que no había más. Estas marcas encienden un degradado en el
+  // lado por el que todavía queda fila.
+  const barraTabs = document.querySelector('.tabs');
+  if (barraTabs) {
+    const marcarDesborde = () => {
+      const resto = barraTabs.scrollWidth - barraTabs.clientWidth;
+      barraTabs.classList.toggle('tabs-mas-izq', barraTabs.scrollLeft > 4);
+      barraTabs.classList.toggle('tabs-mas-der', barraTabs.scrollLeft < resto - 4);
+    };
+    barraTabs.addEventListener('scroll', marcarDesborde, { passive: true });
+    window.addEventListener('resize', marcarDesborde);
+    // Al volver con un #hash, la pestaña activa puede quedar fuera de la fila.
+    // Se mueve `scrollLeft` a mano y no con scrollIntoView: aunque se le pida
+    // `block: 'nearest'`, arrastra también el desplazamiento del documento, y
+    // la página arrancaba bajada con el menú abierto escondido bajo la barra.
+    const activa = barraTabs.querySelector('.tab.active');
+    if (activa) barraTabs.scrollLeft = Math.max(0, activa.offsetLeft - 12);
+    marcarDesborde();
+  }
+
   // Enlace de dispositivo → pestaña Elementos, con la fila resaltada
   document.querySelectorAll('.device-link').forEach(link => {
     link.addEventListener('click', ev => {

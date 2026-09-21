@@ -16,11 +16,16 @@
   <input type="checkbox" id="nav-toggle" class="nav-toggle"
          aria-label="Mostrar u ocultar la lista de redes">
 
-  {# Solo visible por debajo de 900px; en escritorio manda la barra lateral. #}
+  {# Solo visible por debajo de 900px (incluido), así que también sale en la
+     ventana de escritorio estrechada al mínimo, que son 900 justos. #}
   <header class="topbar">
-    {# El nombre accesible lo pone el checkbox, que es quien recibe el foco. #}
-    <label for="nav-toggle" class="nav-burger" aria-hidden="true">
-      <span></span><span></span><span></span>
+    {# Tres rayas solas no dicen qué hay detrás: parecía que no quedaban más
+       opciones. Por eso el botón lleva la palabra y la cuenta de redes. El
+       nombre accesible lo pone el checkbox, que es quien recibe el foco. #}
+    <label for="nav-toggle" class="nav-menu" aria-hidden="true">
+      <span class="nav-burger"><span></span><span></span><span></span></span>
+      <span class="nav-menu-texto">Redes</span>
+      {% if networks %}<span class="badge">{{ networks|length }}</span>{% endif %}
     </label>
     <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="topbar-logo">
   </header>
