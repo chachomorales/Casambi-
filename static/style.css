@@ -37,6 +37,55 @@ body {
   min-height: 100vh;
 }
 
+/* ── Barra superior ───────────────────────────────────────────────────────── */
+/* Solo existe por debajo de 900px. En escritorio la barra lateral cabe siempre
+   —la ventana de pywebview tiene min_size (900, 600)—, así que esto es de facto
+   exclusivo de la versión web en tableta y teléfono. */
+.nav-toggle { display: none; }
+
+.topbar {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.topbar-logo { max-width: 120px; height: auto; }
+
+/* 44x44: el mínimo táctil que pide Apple. El padding lateral deja las barras
+   más estrechas que la zona sensible, que es lo que se quiere. */
+.nav-burger {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  height: 44px;
+  padding: 0 9px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.nav-burger span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--navy);
+  transition: transform .18s, opacity .18s;
+}
+/* Abierto, las tres barras se cruzan en aspa */
+.nav-toggle:checked ~ .topbar .nav-burger span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.nav-toggle:checked ~ .topbar .nav-burger span:nth-child(2) { opacity: 0; }
+.nav-toggle:checked ~ .topbar .nav-burger span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-burger span { transition: none; }
+}
+
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
 .sidebar {
   width: var(--sidebar-w);
@@ -1067,8 +1116,99 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
 .cuenta-redes { font-size: 12px; color: #8a97a8; white-space: nowrap; }
 .btn-danger { background: #fff; color: #b3261e; border: 1px solid #f0b4b0; }
 
-@media (max-width: 800px) {
+/* ── Pantallas estrechas ──────────────────────────────────────────────────── */
+/* Dos cortes: 900px para tableta —el iPad mini en vertical mide 744— y 600px
+   para teléfono. Ninguno se dispara en escritorio: la ventana no baja de 900. */
+
+@media (max-width: 900px) {
   body { flex-direction: column; }
-  .sidebar { width: 100%; min-width: 0; height: auto; position: static; }
+  .topbar { display: flex; }
+
+  /* Visible para el teclado y el lector de pantalla, invisible para el ojo:
+     quien dibuja el estado es el aspa de .nav-burger. */
+  .nav-toggle {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .nav-toggle:focus-visible ~ .topbar .nav-burger {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Plegada por omisión: apilarla entera dejaba el contenido fuera de pantalla */
+  .sidebar {
+    display: none;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: 70vh;
+    position: static;
+  }
+  .nav-toggle:checked ~ .sidebar { display: flex; }
+  .sidebar-brand { display: none; }      /* el logo ya está en la barra superior */
+  .net-link { padding: 13px 16px; }      /* alto de dedo, no de ratón */
+
   .content { max-width: 100%; padding: 18px; }
+
+  /* Nueve pestañas envueltas se comían media pantalla: una sola fila que rueda */
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: 0 0 auto; scroll-snap-align: start; }
+
+  /* dvh y no vh: con vh el plano queda tapado por la barra de Safari */
+  .plano-viewport { max-height: 70vh; max-height: 70dvh; }
+}
+
+@media (max-width: 600px) {
+  .content { padding: 14px 14px calc(22px + env(safe-area-inset-bottom)); }
+  .hero h1 { font-size: 23px; }
+  .page-header h1 { font-size: 22px; }
+  .tab-panel { padding: 12px; }
+
+  /* Safari hace zoom de toda la página al enfocar un campo de menos de 16px,
+     y se pierde el sitio donde estabas. Ese tamaño es obligatorio, no estético. */
+  input, select, textarea { font-size: 16px; }
+  .col-filter, .table-search, .btncount-input,
+  .btn-usa, .btn-prog, .sensor-modo, .sensor-esc,
+  .plano-name-input, .plano-rename, .plano-page-input,
+  .plano-element-filter, .plano-element-select { font-size: 16px; }
+  .col-filter { padding: 6px 8px; }
+
+  /* Mínimo táctil en todo lo que se pulsa */
+  .btn { padding: 12px 18px; }
+  .btn-capture, .plano-del, .plano-marker-del { min-height: 44px; }
+  .plano-zoom button { min-width: 44px; min-height: 44px; }
+  .sidebar-refresh { padding: 10px 12px; font-size: 17px; }
+  .tab { padding: 11px 14px; }
+
+  /* Los dos botones de cabecera reparten el ancho en lugar de partirse */
+  .page-actions { width: 100%; }
+  .page-actions .btn { flex: 1; text-align: center; }
+  .accion-inline { flex: 1; }
+  .accion-inline .btn { width: 100%; }
+
+  /* A 390px un select de 240px mínimo más su filtro no caben en la misma fila */
+  .plano-element-select { min-width: 0; max-width: none; flex-basis: 100%; }
+  .plano-element-filter, .plano-name-input, .plano-rename { width: 100%; }
+  .plano-upload-form input[type="file"] { max-width: 100%; }
+
+  /* Las tablas siguen rodando en horizontal; solo se aprieta el relleno */
+  thead th { padding: 9px 10px; }
+  tbody td { padding: 8px 10px; }
+
+  .cards { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
+  .card { padding: 13px 8px; }
+  .card-num { font-size: 26px; }
 }

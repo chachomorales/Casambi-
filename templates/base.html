@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   {# Punto único desde el que el JavaScript de network.html toma el token CSRF
      para sus llamadas fetch. #}
   <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -10,6 +10,21 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {# La barra lateral se pliega en pantallas estrechas. El interruptor es un
+     checkbox y no JavaScript: al abrir una red la página se recarga entera, así
+     que el menú se cierra solo sin tener que gestionarlo. #}
+  <input type="checkbox" id="nav-toggle" class="nav-toggle"
+         aria-label="Mostrar u ocultar la lista de redes">
+
+  {# Solo visible por debajo de 900px; en escritorio manda la barra lateral. #}
+  <header class="topbar">
+    {# El nombre accesible lo pone el checkbox, que es quien recibe el foco. #}
+    <label for="nav-toggle" class="nav-burger" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </label>
+    <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="topbar-logo">
+  </header>
+
   <aside class="sidebar">
     <div class="sidebar-brand">
       <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="brand-logo">
