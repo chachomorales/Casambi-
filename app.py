@@ -1309,6 +1309,13 @@ def plano_upload(network_id):
 
     raw_page = (request.form.get("page") or "1").strip()
     page = int(raw_page) if raw_page.isdigit() and int(raw_page) >= 1 else 1
+    # La red del simulador que corresponde a esta red de la nube. Vacío importa
+    # todas, como antes de que el simulador separara redes por equipo.
+    raw_red = (request.form.get("red") or "").strip()
+    if raw_red and not raw_red.isdigit():
+        flash("Red del simulador inválida.", "error")
+        return back
+    red_simulador = int(raw_red) if raw_red else None
 
     # (imagen, bloque de cobertura o None). Un proyecto del simulador con varios
     # niveles da una entrada por nivel: cada uno tiene su plano y sus coordenadas.
@@ -1317,7 +1324,7 @@ def plano_upload(network_id):
     try:
         data = file.read()
         if es_cobertura:
-            niveles, avisos_cobertura = cobertura.parse_proyecto(data)
+            niveles, avisos_cobertura = cobertura.parse_proyecto(data, red=red_simulador)
             if len(niveles) > config.MAX_NIVELES_COBERTURA:
                 raise ValueError(
                     f"El proyecto trae {len(niveles)} niveles; el máximo es "
@@ -1370,6 +1377,10 @@ def plano_upload(network_id):
             # proyecto, en la pestaña y en la hoja Planos del Excel.
             if datos and datos.get("nivel"):
                 name = f"{name} · {datos['nivel']}"
+            # Y la red, lo que distingue la importación de este archivo en una
+            # red de la nube de la que se hizo en otra.
+            if datos and datos.get("red_titulo"):
+                name = f"{name} · {datos['red_titulo']}"
 
             plano = {"id": new_id, "name": name, "image": filename, "markers": {}}
             if datos:

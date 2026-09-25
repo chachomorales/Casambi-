@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 233 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 244 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 197:
+# propósito para que PyInstaller no las meta en el .app. Los otros 208:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 233 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 244 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -222,8 +222,19 @@ nivel, convirtiendo cada uno con su propio origen y escala, y `plano_upload()` l
 guarda por separado con el nombre del nivel. Un nivel sin plano, sin escala o vacío
 se salta con aviso; el archivo solo se rechaza si no queda ninguno. Un proyecto de un
 nivel sigue escribiéndose plano (v1-v3), igual que antes: la lista `levels` solo
-existe con dos o más. Una versión mayor a 4 se rechaza a propósito, porque el
-simulador sube la versión justo cuando un lector anterior leería mal el archivo.
+existe con dos o más. Una versión desconocida (hoy, mayor a 5) se rechaza a propósito,
+porque el simulador sube la versión justo cuando un lector anterior leería mal el archivo.
+
+**Varias redes Casambi (formato 5).** Desde el 2026-09-25 cada nodo del simulador puede
+llevar su propia `network`; el que no la trae es de la red de su nivel. Como cada red
+del simulador es una red de la nube distinta, un proyecto con varias se importa **una
+red a la vez**: al elegir el archivo, el formulario lo lee en el navegador (sin subirlo)
+y ofrece sus redes en «Red del simulador». `parse_proyecto(data, red=N)` deja solo los
+nodos de la red N y salta los niveles sin ninguno; el plano lleva la red en el nombre y
+en `cobertura.red_titulo`, y el Excel la dice en el subtítulo. El mismo archivo se
+importa otra vez en la página de la otra red eligiendo la otra. «Todas» —o un proyecto
+con una sola red— importa todo, como antes. La regla de qué red tiene cada nodo vive
+dos veces, en `cobertura.py` y en el script de `network.html`: si cambia, cambian las dos.
 
 **El `.casambi` no guarda el mapa de calor.** El `image` embebido es el plano
 arquitectónico desnudo; el heatmap y las paredes son vectores que el motor Swift calcula

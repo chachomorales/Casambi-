@@ -19,6 +19,12 @@ la red de su nivel (`network` del nivel, 1 si no hay). Los nombres que el
 usuario les puso van en `networkNames` en la raíz. Aquí cada nodo sale con su
 `red` ya resuelta, y el bloque del plano con `redes`, número → nombre.
 
+Cada red del simulador corresponde a una red de la nube distinta, así que un
+proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
+deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
+mismo archivo se importa otra vez en la página de la otra red eligiendo la otra.
+`redes_del_proyecto` dice cuáles trae, para ofrecerlas.
+
 **El proyecto no guarda el mapa de calor.** El `image` embebido es el plano
 arquitectónico desnudo; el heatmap y las paredes son vectores que el motor Swift
 calcula y pinta en vivo, y nunca se serializan. Por eso aquí se importa la
@@ -116,10 +122,64 @@ def _nombres_de_red(proyecto: dict) -> dict[str, str]:
     return nombres
 
 
-def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Image.Image, dict]:
+def _red_del_nodo(nodo: dict, red_del_nivel: int) -> int:
+    """La red de un nodo: la suya, o la de su nivel si nadie se la asignó."""
+    return _red(nodo.get("network")) or red_del_nivel
+
+
+def _nodos_por_red(nivel: dict) -> dict[int, int]:
+    """Cuántos nodos de cada red hay en un nivel."""
+    red_del_nivel = _red(nivel.get("network")) or 1
+    cuenta: dict[int, int] = {}
+    for nodo in nivel.get("nodes") or []:
+        if isinstance(nodo, dict):
+            red = _red_del_nodo(nodo, red_del_nivel)
+            cuenta[red] = cuenta.get(red, 0) + 1
+    return cuenta
+
+
+def _carga(data: bytes) -> dict:
+    """El JSON del proyecto, o CoberturaError si no lo es."""
+    try:
+        proyecto = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise CoberturaError("El archivo no es un proyecto de cobertura válido (JSON).")
+    if not isinstance(proyecto, dict):
+        raise CoberturaError("El archivo no es un proyecto de cobertura válido.")
+    return proyecto
+
+
+def titulo_de_red(red: int, nombres: dict[str, str]) -> str:
+    """«Red 2», o «Red 2 · Pasillos» si tiene nombre. Igual que en el simulador."""
+    nombre = nombres.get(str(red))
+    return f"Red {red} · {nombre}" if nombre else f"Red {red}"
+
+
+def redes_del_proyecto(data: bytes) -> list[dict]:
+    """
+    Las redes Casambi que trae un proyecto, de menor a mayor: número, nombre y
+    cuántos nodos tiene en todos los niveles. Un proyecto anterior a las redes
+    por equipo trae la de cada nivel.
+    """
+    proyecto = _carga(data)
+    nombres = _nombres_de_red(proyecto)
+    total: dict[int, int] = {}
+    for nivel in _niveles(proyecto):
+        for red, cuenta in _nodos_por_red(nivel).items():
+            total[red] = total.get(red, 0) + cuenta
+    return [
+        {"red": red, "nombre": nombres.get(str(red)), "titulo": titulo_de_red(red, nombres),
+         "nodos": total[red]}
+        for red in sorted(total)
+    ]
+
+
+def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None,
+                   red: int | None = None) -> tuple[Image.Image, dict]:
     """
     Un nivel → (plano, datos del nivel en relativas). `nombre` es None en un
     proyecto de un solo nivel, y entonces los mensajes hablan del proyecto.
+    `red` deja solo los nodos de esa red; None, todos.
     """
     sujeto = f"el nivel «{nombre}»" if nombre else "el proyecto"
 
@@ -162,6 +222,8 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Ima
     for nodo in nivel.get("nodes") or []:
         if not isinstance(nodo, dict):
             continue
+        if red is not None and _red_del_nodo(nodo, red_del_nivel) != red:
+            continue
         rel = a_relativas(nodo.get("x"), nodo.get("y"))
         if rel is None:
             continue
@@ -177,7 +239,7 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Ima
             "ptx_dbm":  nodo.get("ptxDbm"),
             "fijo":     bool(nodo.get("locked")),
             # La suya, o la de su nivel si nadie se la asignó.
-            "red":      _red(nodo.get("network")) or red_del_nivel,
+            "red":      _red_del_nodo(nodo, red_del_nivel),
             # Lo rellena el usuario desde la pestaña Planos.
             "unit_id":  None,
         })
@@ -229,7 +291,8 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Ima
     }
 
 
-def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[str]]:
+def parse_proyecto(data: bytes, red: int | None = None
+                   ) -> tuple[list[tuple[Image.Image, dict]], list[str]]:
     """
     Lee un `.casambi` y devuelve ([(plano, cobertura), …], avisos).
 
@@ -243,13 +306,12 @@ def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[st
 
     `avisos` dice qué niveles se dejaron fuera y por qué. Solo si no queda ninguno
     el proyecto entero se rechaza.
+
+    `red` importa solo esa red Casambi del simulador: sus nodos, en los niveles
+    donde tiene alguno. None importa todo, como antes de que hubiera redes por
+    equipo.
     """
-    try:
-        proyecto = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise CoberturaError("El archivo no es un proyecto de cobertura válido (JSON).")
-    if not isinstance(proyecto, dict):
-        raise CoberturaError("El archivo no es un proyecto de cobertura válido.")
+    proyecto = _carga(data)
 
     version = proyecto.get("version", 1)
     if not isinstance(version, int) or version not in VERSIONES_CONOCIDAS:
@@ -270,12 +332,24 @@ def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[st
     niveles = _niveles(proyecto)
     varios = len(niveles) > 1
     nombres_de_red = _nombres_de_red(proyecto)
+    if red is not None:
+        presentes = {r for nivel in niveles for r in _nodos_por_red(nivel)}
+        if red not in presentes:
+            disponibles = ", ".join(titulo_de_red(r, nombres_de_red) for r in sorted(presentes))
+            raise CoberturaError(
+                f"El proyecto no tiene nodos en la Red {red}. Trae: "
+                f"{disponibles or 'ninguna'}."
+            )
     planos: list[tuple[Image.Image, dict]] = []
     avisos: list[str] = []
     for indice, nivel in enumerate(niveles):
         nombre = ((nivel.get("name") or "").strip() or f"Nivel {indice}") if varios else None
+        # Un nivel sin nodos de la red pedida no es de esa red: su plano iría
+        # vacío al informe de una red a la que no pertenece.
+        if red is not None and red not in _nodos_por_red(nivel):
+            continue
         try:
-            plano, datos = _importa_nivel(nivel, perdidas, nombre)
+            plano, datos = _importa_nivel(nivel, perdidas, nombre, red)
         except CoberturaError as e:
             if not varios:
                 raise
@@ -291,6 +365,9 @@ def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[st
             "niveles":   len(niveles),
             # Sólo las redes con nombre; las demás son «Red N».
             "redes":     nombres_de_red,
+            # La red importada, o None si entraron todas.
+            "red":       red,
+            "red_titulo": titulo_de_red(red, nombres_de_red) if red is not None else None,
             **datos,
         }))
 

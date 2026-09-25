@@ -1455,6 +1455,8 @@ def _subtitulo_cobertura(plan: dict) -> str:
         partes.append(f"Cliente: {c['cliente']}")
     if c.get("nivel"):
         partes.append(f"Nivel: {c['nivel']} (de {c.get('niveles') or '?'})")
+    if c.get("red_titulo"):
+        partes.append(f"Simulador: {c['red_titulo']}")
     if c.get("ancho_m") and c.get("alto_m"):
         partes.append(f"{c['ancho_m']} × {c['alto_m']} m")
     if c.get("n") is not None:

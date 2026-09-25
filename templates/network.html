@@ -508,6 +508,12 @@
       <label class="plano-page-label" title="Página a usar (solo para PDF)">
         Página <input type="number" name="page" min="1" value="1" class="plano-page-input">
       </label>
+      {# Sólo para un .casambi con varias redes: lo llena el script al elegir el
+         archivo, que lo lee en el navegador sin subirlo. #}
+      <label class="plano-red-label" hidden
+             title="Cada red del simulador es una red Casambi distinta: importa aquí la que corresponde a esta red">
+        Red del simulador <select name="red" class="plano-red-select"></select>
+      </label>
       <button type="submit" class="btn btn-outline">⬆ Subir plano</button>
     </form>
     <span class="hint">
@@ -517,7 +523,9 @@
       <br>
       También puedes subir un proyecto <b>.casambi</b> del Simulador de Cobertura: se
       importan el plano, los nodos, las paredes y los huecos de losa, y si tiene varios
-      niveles cada uno queda como un plano aparte. El mapa de calor no viaja en el
+      niveles cada uno queda como un plano aparte. Si el proyecto tiene varias redes
+      Casambi, eliges cuál corresponde a esta red y solo entran sus nodos; la otra se
+      importa en la página de su red. El mapa de calor no viaja en el
       proyecto — si lo quieres en el informe, expórtalo aparte desde el simulador
       (⇧⌘E) y súbelo como una imagen más.
     </span>
@@ -533,6 +541,7 @@
       {% if cob %}
       <span class="plano-tag" title="Importado del Simulador de Cobertura">📡 Cobertura</span>
       <span class="plano-count hint">
+        {% if cob.red_titulo %}{{ cob.red_titulo }} · {% endif %}
         {% if cob.nivel %}{{ cob.nivel }} · {% endif %}
         {{ cob.nodos|length }} nodo(s) · {{ cob.paredes|length }} pared(es) ·
         {% if cob.huecos %}{{ cob.huecos|length }} hueco(s) de losa · {% endif %}
@@ -645,6 +654,63 @@
 <script>
   // Token CSRF para todas las llamadas fetch de esta página.
   const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+  // Un .casambi con varias redes Casambi: se lee aquí mismo para ofrecer cuál
+  // importar, con la misma regla que cobertura.py — la red propia del nodo, o
+  // la de su nivel. El servidor vuelve a comprobarlo; esto sólo arma la lista.
+  (function () {
+    const form = document.querySelector('.plano-upload-form');
+    if (!form) return;
+    const fileInput = form.querySelector('input[type="file"]');
+    const label = form.querySelector('.plano-red-label');
+    const select = form.querySelector('.plano-red-select');
+    const esRed = v => Number.isInteger(v) && v >= 1;
+
+    function ocultar() {
+      select.innerHTML = '';
+      label.hidden = true;
+    }
+
+    function redes(proyecto) {
+      const lista = Array.isArray(proyecto.levels) && proyecto.levels.length > 1
+        ? proyecto.levels : [proyecto];
+      const nombres = {};
+      for (const n of proyecto.networkNames || []) {
+        if (n && esRed(n.network) && (n.name || '').trim()) nombres[n.network] = n.name.trim();
+      }
+      const cuenta = {};
+      for (const nivel of lista) {
+        const propia = esRed(nivel.network) ? nivel.network : 1;
+        for (const nodo of nivel.nodes || []) {
+          const red = esRed(nodo && nodo.network) ? nodo.network : propia;
+          cuenta[red] = (cuenta[red] || 0) + 1;
+        }
+      }
+      return Object.keys(cuenta).map(Number).sort((a, b) => a - b).map(red => ({
+        red, nodos: cuenta[red],
+        titulo: nombres[red] ? `Red ${red} · ${nombres[red]}` : `Red ${red}`,
+      }));
+    }
+
+    fileInput.addEventListener('change', () => {
+      ocultar();
+      const file = fileInput.files[0];
+      if (!file || !/\.casambi(\.json)?$/i.test(file.name)) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let lista;
+        try { lista = redes(JSON.parse(reader.result)); } catch (e) { return; }
+        // Con una sola red no hay nada que elegir: entra todo, como siempre.
+        if (lista.length < 2) return;
+        for (const r of lista) {
+          select.add(new Option(`${r.titulo} · ${r.nodos} nodo(s)`, String(r.red)));
+        }
+        select.add(new Option('Todas (como antes)', ''));
+        label.hidden = false;
+      };
+      reader.readAsText(file);
+    });
+  })();
 
   // Pestañas (la activa se recuerda en el hash de la URL)
   function activateTab(name) {
