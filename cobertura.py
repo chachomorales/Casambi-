@@ -13,6 +13,12 @@ huecos de losa dentro de `levels`, y los campos de la raíz van vacíos: leídos
 como antes, el proyecto daba «no tiene plano cargado». Cada nivel se importa
 como un plano aparte, porque cada uno tiene su imagen y sus coordenadas.
 
+**Un plano puede llevar varias redes Casambi** (formato 5, desde el
+2026-09-25). Cada nodo puede traer su propia `network`; el que no la trae es de
+la red de su nivel (`network` del nivel, 1 si no hay). Los nombres que el
+usuario les puso van en `networkNames` en la raíz. Aquí cada nodo sale con su
+`red` ya resuelta, y el bloque del plano con `redes`, número → nombre.
+
 **El proyecto no guarda el mapa de calor.** El `image` embebido es el plano
 arquitectónico desnudo; el heatmap y las paredes son vectores que el motor Swift
 calcula y pinta en vivo, y nunca se serializan. Por eso aquí se importa la
@@ -41,10 +47,11 @@ _DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;,]*);base64,(?P<payload>.*)$", re.
 EXTENSIONES = (".casambi", ".casambi.json")
 
 # Formatos que este importador sabe leer: 1 base, 2 con cuadro de cargas, 3 con
-# mediciones y 4 con varios niveles. El simulador sube la versión justo cuando
-# un lector anterior leería mal el archivo —la 4 vació los campos de la raíz—,
-# así que una versión desconocida se rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 5)
+# mediciones, 4 con varios niveles y 5 con redes Casambi por equipo. El
+# simulador sube la versión justo cuando un lector anterior leería mal el
+# archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
+# rechaza en vez de adivinarla.
+VERSIONES_CONOCIDAS = range(1, 6)
 
 
 class CoberturaError(Exception):
@@ -88,6 +95,27 @@ def _niveles(proyecto: dict) -> list[dict]:
     return niveles if len(niveles) > 1 else [proyecto]
 
 
+def _red(valor) -> int | None:
+    """Un número de red Casambi, o None si no lo es."""
+    if isinstance(valor, bool) or not isinstance(valor, int) or valor < 1:
+        return None
+    return valor
+
+
+def _nombres_de_red(proyecto: dict) -> dict[str, str]:
+    """Los nombres que el usuario les puso a las redes, por número. Con la clave
+    en texto, que es como queda al guardarse en JSON."""
+    nombres = {}
+    for entrada in proyecto.get("networkNames") or []:
+        if not isinstance(entrada, dict):
+            continue
+        red = _red(entrada.get("network"))
+        nombre = (entrada.get("name") or "").strip()
+        if red and nombre:
+            nombres[str(red)] = nombre
+    return nombres
+
+
 def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Image.Image, dict]:
     """
     Un nivel → (plano, datos del nivel en relativas). `nombre` es None en un
@@ -112,6 +140,8 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Ima
             f"{sujeto[0].upper()}{sujeto[1:]} no tiene escala calibrada; sin ella no se "
             "pueden situar los nodos sobre el plano."
         )
+
+    red_del_nivel = _red(nivel.get("network")) or 1
 
     origen_x = float(nivel.get("imageOriginX") or 0)
     origen_y = float(nivel.get("imageOriginY") or 0)
@@ -146,6 +176,8 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None) -> tuple[Ima
             "nota":     nota,
             "ptx_dbm":  nodo.get("ptxDbm"),
             "fijo":     bool(nodo.get("locked")),
+            # La suya, o la de su nivel si nadie se la asignó.
+            "red":      _red(nodo.get("network")) or red_del_nivel,
             # Lo rellena el usuario desde la pestaña Planos.
             "unit_id":  None,
         })
@@ -237,6 +269,7 @@ def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[st
 
     niveles = _niveles(proyecto)
     varios = len(niveles) > 1
+    nombres_de_red = _nombres_de_red(proyecto)
     planos: list[tuple[Image.Image, dict]] = []
     avisos: list[str] = []
     for indice, nivel in enumerate(niveles):
@@ -256,6 +289,8 @@ def parse_proyecto(data: bytes) -> tuple[list[tuple[Image.Image, dict]], list[st
             # None en un proyecto de un solo nivel.
             "nivel":     nombre,
             "niveles":   len(niveles),
+            # Sólo las redes con nombre; las demás son «Red N».
+            "redes":     nombres_de_red,
             **datos,
         }))
 
