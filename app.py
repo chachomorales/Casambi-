@@ -51,6 +51,8 @@ from report import (
     _controls_summary,
     _fixture_controls_summary,
     diagnostico_conectividad,
+    temperatura_unidad,
+    texto_temperatura,
     generate_report,
 )
 
@@ -95,6 +97,29 @@ def estatico(filename: str) -> str:
     except OSError:
         return url_for("static", filename=filename)
     return url_for("static", filename=filename, v=marca)
+
+
+@app.template_filter("hace")
+def hace(momento: datetime | None) -> str:
+    """Antigüedad de una lectura en palabras: «hace 2 h».
+
+    La temperatura que da la nube puede tener horas; en pantalla importa más
+    cuánto hace que la fecha exacta, que va en el `title`. Un reloj del equipo
+    un poco adelantado da edades negativas: se cuentan como «ahora».
+    """
+    if momento is None:
+        return ""
+    minutos = int((config.ahora() - momento).total_seconds() // 60)
+    if minutos < 1:
+        return "ahora"
+    if minutos < 60:
+        return f"hace {minutos} min"
+    if minutos < 48 * 60:
+        return f"hace {minutos // 60} h"
+    return f"hace {minutos // (24 * 60)} días"
+
+
+app.add_template_global(texto_temperatura, "texto_temperatura")
 
 
 LOGOS_DIR = Path(__file__).parent / "logos"
@@ -857,6 +882,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
     unit_map = {u.get("id"): u.get("name", str(u.get("id"))) for u in units}
 
     type_counts = Counter(_classify_unit(u) for u in units)
+    state_units = {u.get("id"): u for u in data["state"].get("units", [])}
 
     def enrich(u: dict) -> dict:
         fid = u.get("fixtureId")
@@ -874,6 +900,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "fixture_id": u.get("fixtureId", "-"),
             "group": group_map.get(gid, "-") if gid else "-",
             "controls": _fixture_controls_summary(fixture) or _controls_summary(u) or "-",
+            "temperatura": temperatura_unidad(state_units.get(u.get("id"), {})),
         }
 
     elementos = sorted((enrich(u) for u in units),

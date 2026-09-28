@@ -10,6 +10,7 @@ import io
 import re
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -264,6 +265,35 @@ def _aviso_unidad(unit: dict) -> str:
     return "; ".join(avisos)
 
 
+def temperatura_unidad(live: dict) -> dict | None:
+    """Última temperatura que reporta la unidad, con la hora de la lectura.
+
+    No va en `controls` sino en una lista aparte, `sensors`, del estado. Hoy
+    solo la traen las Eulum TRED-E-CSB-2A (perfil: sensor «Temperature» en
+    grados), y sigue al nivel de regulación: es la del equipo, no la del
+    ambiente. El `timestamp` puede tener horas —es la última lectura que le
+    llegó a la nube—, así que el valor nunca se da sin su fecha.
+    """
+    for s in live.get("sensors") or []:
+        if s.get("name") != "Temperature" or not isinstance(s.get("value"), (int, float)):
+            continue
+        leida = None
+        if isinstance(s.get("timestamp"), (int, float)):
+            leida = datetime.fromtimestamp(
+                s["timestamp"] / 1000, config.zona_horaria()).replace(tzinfo=None)
+        return {"grados": round(s["value"]), "leida": leida}
+    return None
+
+
+def texto_temperatura(t: dict | None) -> str:
+    """«35 °C · 27/09/2026 14:03», para el Excel y el título de la interfaz."""
+    if not t:
+        return "-"
+    if t["leida"] is None:
+        return f"{t['grados']} °C"
+    return f"{t['grados']} °C · {t['leida']:%d/%m/%Y %H:%M}"
+
+
 def diagnostico_conectividad(network: dict, state: dict) -> dict:
     """
     Estado de conexión de la red y de cada dispositivo, para reportar problemas.
@@ -320,6 +350,7 @@ def diagnostico_conectividad(network: dict, state: dict) -> dict:
                              if live.get("activeSceneId") else "-",
             "firmware":      live.get("firmwareVersion") or unit.get("firmwareVersion") or "-",
             "address":       unit.get("address", "-"),
+            "temperatura":   temperatura_unidad(live),
         })
 
     # Primero lo que hay que mirar: averías, luego avisos, luego el resto.
@@ -379,6 +410,7 @@ def diagnostico_conectividad(network: dict, state: dict) -> dict:
         "sin_lectura":     sin_lectura,
         "con_aviso":       con_aviso,
         "escenas_activas": len(state.get("activeScenes") or {}),
+        "con_temperatura": any(d["temperatura"] for d in dispositivos),
         "dispositivos":    dispositivos,
     }
 
@@ -728,6 +760,10 @@ def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
     hdr = 17
     columns = ["ID", "Nombre", "Categoría", "Grupo", "Estado", "Aviso",
                "Encendido", "Nivel", "Escena activa", "Firmware", "Dirección MAC"]
+    # Solo las redes con luminarias que la reportan: en el resto, una columna vacía
+    if diag["con_temperatura"]:
+        columns.append("Temperatura")
+        ws.column_dimensions["L"].width = 24
     _write_header_row(ws, hdr, columns)
     ws.row_dimensions[hdr].height = 30
 
@@ -745,6 +781,8 @@ def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
             d["aviso"] or "-", d["encendido"], d["nivel"], d["escena"],
             d["firmware"], d["address"],
         ]
+        if diag["con_temperatura"]:
+            values.append(texto_temperatura(d["temperatura"]))
         _write_data_row(ws, row, values, alternate=(row % 2 == 0))
         ws.row_dimensions[row].height = 18
 
@@ -762,7 +800,7 @@ def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
     if diag["dispositivos"]:
         last = hdr + len(diag["dispositivos"])
         # Filtro para aislar rápido lo que falla al hablar con el cliente
-        ws.auto_filter.ref = f"A{hdr}:K{last}"
+        ws.auto_filter.ref = f"A{hdr}:{get_column_letter(len(columns))}{last}"
         _freeze(ws, f"A{hdr + 1}")
     else:
         ws.cell(row=hdr + 1, column=1, value="La red no tiene dispositivos dados de alta.")
@@ -997,6 +1035,12 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
         "ID", "Nombre", "Dirección MAC", "Versión Firmware",
         "Fixture ID", "Grupo", "Soporta",
     ]
+    state_units = {u.get("id"): u for u in state.get("units", [])}
+    temperaturas = {u.get("id"): temperatura_unidad(state_units.get(u.get("id"), {}))
+                    for u in luminarias}
+    con_temperatura = any(temperaturas.values())
+    if con_temperatura:
+        columns.append("Temperatura")
     _write_header_row(ws, 1, columns)
 
     for row_idx, unit in enumerate(luminarias, start=2):
@@ -1012,6 +1056,8 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
             group_map.get(gid, "-") if gid else "-",
             _unit_soporta(unit, fixtures),
         ]
+        if con_temperatura:
+            values.append(texto_temperatura(temperaturas[uid]))
         _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
         ws.row_dimensions[row_idx].height = 18
 

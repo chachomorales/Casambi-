@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 250 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 256 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 214:
+# propósito para que PyInstaller no las meta en el .app. Los otros 220:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 250 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 256 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -338,6 +338,17 @@ offline», y hay dos razones medidas sobre las redes reales:
 `condition` es el otro dato aprovechable: la API no lo documenta, valía 0 en 1.544 de
 1.550 unidades y 128 en seis luminarias por lo demás sanas (`status: "ok"`, online).
 Se muestra como aviso sin traducirlo a una causa, porque no sabemos cuál es.
+
+**La temperatura no está en `controls`.** El estado de cada unidad trae aparte una
+lista `sensors` (`[{"name": "Temperature", "value": 35.0, "timestamp": …}]`) que hoy
+solo mandan las Eulum TRED-E-CSB-2A: 75 de 1.555 unidades, de 28 a 57 °C, y sigue al
+nivel de regulación, así que es la del equipo, no la del ambiente. Es la *última*
+lectura que llegó a la nube —se vieron de hasta diez horas—, por eso
+`report.temperatura_unidad()` la devuelve con su hora y nunca se enseña sin ella. Sale
+en Luminarias y Conectividad solo si la red tiene alguna. **No lleva umbral de
+alarma** a propósito: no sabemos a partir de qué temperatura sufre ese driver, y
+acusar a equipos sanos es justo lo que esta sección evita. Si se consigue la ficha
+técnica, ahí va.
 
 ## Convenciones
 

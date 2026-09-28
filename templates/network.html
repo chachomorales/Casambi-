@@ -140,6 +140,7 @@
         <th>ID</th><th>Nombre</th><th>Categoría</th><th>Grupo</th><th>Estado</th>
         <th>Aviso</th><th>Encendido</th><th>Nivel</th><th>Escena activa</th>
         <th>Firmware</th><th>Dirección MAC</th>
+        {%- if conexion.con_temperatura %}<th>Temperatura</th>{% endif %}
       </tr></thead>
       <tbody>
         {% for d in conexion.dispositivos %}
@@ -151,6 +152,7 @@
           <td>{{ d.aviso or '—' }}</td>
           <td>{{ d.encendido }}</td><td>{{ d.nivel }}</td><td>{{ d.escena }}</td>
           <td>{{ d.firmware }}</td><td class="mono">{{ d.address }}</td>
+          {%- if conexion.con_temperatura %}{% if d.temperatura %}<td class="temp-cell" title="Última lectura: {{ texto_temperatura(d.temperatura) }}">{{ d.temperatura.grados }} °C{% if d.temperatura.leida %} <span class="temp-hace">· {{ d.temperatura.leida|hace }}</span>{% endif %}</td>{% else %}<td>–</td>{% endif %}{% endif %}
         </tr>
         {% else %}
         <tr><td colspan="11" class="empty">La red no tiene dispositivos dados de alta.</td></tr>
@@ -162,18 +164,22 @@
 
 <!-- Luminarias -->
 <section class="tab-panel" id="panel-luminarias">
+  {#- Solo con luminarias que reportan temperatura (hoy, las Eulum TRED) #}
+  {% set lum_temperatura = luminarias|selectattr('temperatura')|list|length > 0 %}
   <input type="search" class="table-search" placeholder="Buscar en luminarias…" data-target="tbl-luminarias">
   <div class="table-wrap">
     <table id="tbl-luminarias">
       <thead><tr>
         <th>ID</th><th>Nombre</th><th>Fabricante</th><th>Modelo</th>
         <th>Dirección MAC</th><th>Firmware</th><th>Grupo</th><th>Soporta</th>
+        {%- if lum_temperatura %}<th>Temperatura</th>{% endif %}
       </tr></thead>
       <tbody>
         {% for e in luminarias %}
         <tr>
           <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.vendor }}</td><td>{{ e.model }}</td>
           <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td><td>{{ e.group }}</td><td>{{ e.controls }}</td>
+          {%- if lum_temperatura %}{% if e.temperatura %}<td class="temp-cell" title="Última lectura: {{ texto_temperatura(e.temperatura) }}">{{ e.temperatura.grados }} °C{% if e.temperatura.leida %} <span class="temp-hace">· {{ e.temperatura.leida|hace }}</span>{% endif %}</td>{% else %}<td>–</td>{% endif %}{% endif %}
         </tr>
         {% else %}
         <tr><td colspan="8" class="empty">No se encontraron luminarias en esta red.</td></tr>
