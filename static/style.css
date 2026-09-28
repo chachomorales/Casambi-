@@ -445,6 +445,19 @@ td.empty { text-align: center; color: #999; padding: 24px; }
 
 .level-cell { white-space: nowrap; color: #667; }
 
+.color-cell { white-space: nowrap; color: #667; font-variant-numeric: tabular-nums; }
+/* El borde hace visible un color claro, o el blanco puro, sobre la fila blanca */
+.color-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  vertical-align: -2px;
+}
+.color-swatch ~ .color-blanco { margin-left: 10px; }
+
 .level-input {
   width: 62px;
   padding: 4px 6px;

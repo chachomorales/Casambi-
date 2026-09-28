@@ -64,6 +64,9 @@ COLOR_COB_NODO     = "00B0F0"   # cian – nodo simulado sin unidad real asociad
 COLOR_COB_NOTA     = "6B6B6B"   # gris – texto del subtítulo de la sección
 COLOR_COB_HUECO    = "4B5563"   # gris pizarra – huecos de losa del nivel
 
+# Texto sobre el color capturado de una escena (el relleno lo pone la escena)
+COLOR_ESC_TXT_OSCURO   = "1A1A1A"
+
 THIN = Side(style="thin", color=COLOR_BORDER)
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
@@ -869,11 +872,26 @@ def _sheet_grupos(wb: Workbook, network: dict) -> None:
     _freeze(ws)
 
 
-def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None) -> None:
+def _pintar_color(cell, rgb: str) -> None:
+    """Rellena la celda con el color capturado, con el texto legible encima."""
+    hexa = rgb.lstrip("#").upper()
+    r, g, b = (int(hexa[i:i + 2], 16) for i in (0, 2, 4))
+    # Luminancia percibida (Rec. 601): por encima de la mitad, texto oscuro.
+    oscuro = (0.299 * r + 0.587 * g + 0.114 * b) > 140
+    cell.fill = PatternFill("solid", fgColor=hexa)
+    cell.font = Font(name="Calibri", size=10,
+                     color=COLOR_ESC_TXT_OSCURO if oscuro else COLOR_HEADER_FG)
+
+
+def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None,
+                   scene_colors: dict | None = None) -> None:
     """
     Una fila por dispositivo de cada escena, con su intensidad anotada.
     Las columnas de la escena (ID, Nombre, Tipo, Nº) se combinan verticalmente
     por bloque. scene_levels: {scene_id: {unit_id: nivel}} (niveles en %).
+    scene_colors: {scene_id: {unit_id: {"rgb", "blanco"}}}, capturado de la
+    red. Las columnas Color y Blanco solo salen si hay alguno: en la mayoría
+    de redes todas las luminarias son solo regulables.
     """
     ws = wb.create_sheet("Escenas")
     ws.sheet_view.showGridLines = False
@@ -881,10 +899,15 @@ def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None
 
     if scene_levels is None:
         scene_levels = {}
+    if scene_colors is None:
+        scene_colors = {}
+    con_color = any(scene_colors.values())
 
     unit_map = {u.get("id"): u.get("name", str(u.get("id"))) for u in network.get("units", [])}
 
     columns = ["ID", "Nombre", "Tipo", "Nº Dispositivos", "Dispositivo", "Intensidad"]
+    if con_color:
+        columns += ["Color", "Blanco"]
     _write_header_row(ws, 1, columns)
 
     scenes = sorted(network.get("scenes", []), key=lambda s: s.get("position", 0))
@@ -898,9 +921,11 @@ def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None
             scene_unit_ids = [v.get("id") for v in scene_units_raw]
 
         levels = scene_levels.get(str(scene.get("id")), {})
+        colors = scene_colors.get(str(scene.get("id")), {})
         devices = sorted(
             (
-                (unit_map.get(uid, str(uid)), levels.get(str(uid), ""))
+                (unit_map.get(uid, str(uid)), levels.get(str(uid), ""),
+                 colors.get(str(uid)) or {})
                 for uid in scene_unit_ids if uid is not None
             ),
             key=lambda d: d[0],
@@ -911,10 +936,10 @@ def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None
 
         for i in range(block):
             if devices:
-                dev_name, dev_level = devices[i]
+                dev_name, dev_level, dev_color = devices[i]
                 dev_level = f"{dev_level} %" if dev_level != "" else "-"
             else:
-                dev_name, dev_level = "-", "-"
+                dev_name, dev_level, dev_color = "-", "-", {}
             values = [
                 scene.get("id", "-") if i == 0 else None,
                 scene.get("name", "-") if i == 0 else None,
@@ -923,8 +948,14 @@ def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None
                 dev_name,
                 dev_level,
             ]
+            if con_color:
+                blanco = dev_color.get("blanco")
+                values += [dev_color.get("rgb") or "-",
+                           f"{blanco} %" if blanco is not None else "-"]
             _write_data_row(ws, row + i, values, alternate=alternate)
             ws.row_dimensions[row + i].height = 18
+            if dev_color.get("rgb"):
+                _pintar_color(ws.cell(row=row + i, column=7), dev_color["rgb"])
 
         # Combinar las columnas de la escena a lo alto del bloque
         if block > 1:
@@ -1693,6 +1724,7 @@ def _purgar_informes(directorio: Path, dias: int = DIAS_INFORMES) -> int:
 
 def generate_report(network: dict, state: dict, fixtures: dict | None = None,
                     scene_levels: dict | None = None,
+                    scene_colors: dict | None = None,
                     button_config: dict | None = None,
                     sensor_config: dict | None = None,
                     schedules: list | None = None,
@@ -1703,6 +1735,8 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     """
     Build the Excel report from raw API data and save it.
     scene_levels: {scene_id: {unit_id: nivel%}} — intensidades anotadas por el usuario.
+    scene_colors: {scene_id: {unit_id: {"rgb", "blanco"}}} — color capturado de
+        las luminarias RGBW, ya sin las que cambiaron a un perfil sin color.
     button_config: {unit_id: {"count", "buttons"}} — botones anotados de pulsadores.
     sensor_config: {unit_id: {"modo", "escena_presencia", "escena_ausencia"}} — sensores anotados.
     schedules: lista de horarios documentados por el usuario.
@@ -1725,7 +1759,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     _sheet_pulsadores(wb, network, state, button_config=button_config)
     _sheet_sensores(wb, network, state, fixtures, sensor_config=sensor_config)
     _sheet_grupos(wb, network)
-    _sheet_escenas(wb, network, scene_levels=scene_levels)
+    _sheet_escenas(wb, network, scene_levels=scene_levels, scene_colors=scene_colors)
     _sheet_horarios(wb, schedules=schedules)
     _sheet_bitacora(wb, bitacora=bitacora)
     _sheet_planos(wb, network, images_dir, manual_planos=manual_planos)

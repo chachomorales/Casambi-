@@ -543,6 +543,103 @@ def _save_scene_level(network_id: str, scene_id: str, unit_id: str, level: str) 
         _write_json(_levels_path(network_id), levels)
 
 
+# ── Color de escena (capturado de la red real) ───────────────────────────────
+# Como la intensidad, la API no guarda el color de cada luminaria en la escena:
+# solo se obtiene activándola y leyendo el estado. A diferencia de la
+# intensidad no se edita a mano, así que va en su propio fichero,
+# data/scene_colors_<red>.json, con la forma
+# {scene_id: {unit_id: {"rgb": "#B700FF", "blanco": 100}}}.
+
+# Controles del perfil (/v1/fixtures/{id}) que significan que la luminaria
+# tiene color. Si el perfil no trae ninguno, lo guardado no se muestra.
+_CONTROLES_DE_COLOR = {"rgb", "white"}
+
+
+def _colors_path(network_id: str) -> Path:
+    return DATA_DIR / f"scene_colors_{network_id}.json"
+
+
+def _load_scene_colors(network_id: str) -> dict:
+    return _read_json(_colors_path(network_id), {})
+
+
+def _save_scene_colors(network_id: str, scene_id: str, colores: dict) -> None:
+    """Guarda lo capturado de una escena; un `None` borra el color de esa unidad.
+
+    Borrar importa: si una luminaria deja de reportar color porque le
+    cambiaron el perfil, el color de la captura anterior ya no es verdad.
+    """
+    with _net_lock(network_id):
+        todos = _load_scene_colors(network_id)
+        escena = todos.setdefault(str(scene_id), {})
+        for unit_id, color in colores.items():
+            if color:
+                escena[str(unit_id)] = color
+            else:
+                escena.pop(str(unit_id), None)
+        if not escena:
+            todos.pop(str(scene_id), None)
+        _write_json(_colors_path(network_id), todos)
+
+
+def _color_de_estado(unidad: dict) -> dict | None:
+    """Color y blanco que reporta una unidad en el estado en vivo.
+
+    En el estado, `controls` viene anidado (`[[{...}]]`). El color llega como
+    `"rgb(183,  0, 255)"`, con espacios irregulares; se guarda en hexadecimal,
+    que es lo que entienden a la vez el navegador y openpyxl.
+    """
+    controles = [c for grupo in (unidad.get("controls") or [])
+                 for c in (grupo if isinstance(grupo, list) else [grupo])
+                 if isinstance(c, dict)]
+    color: dict = {}
+    for c in controles:
+        if c.get("type") == "Color":
+            m = re.fullmatch(r"\s*rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*",
+                             str(c.get("rgb") or ""))
+            if m:
+                color["rgb"] = "#{:02X}{:02X}{:02X}".format(
+                    *(min(255, int(v)) for v in m.groups()))
+        elif c.get("type") == "White" and isinstance(c.get("value"), (int, float)):
+            color["blanco"] = round(c["value"] * 100)
+    return color or None
+
+
+def _admite_color(fixture: dict | None) -> bool:
+    """Si el perfil actual de la luminaria tiene color.
+
+    Sin perfil (la descarga de modelos falló) no se sabe; se da por bueno
+    para no esconder lo capturado por un fallo de red.
+    """
+    if not fixture or not fixture.get("controls"):
+        return True
+    controles = fixture["controls"]
+    if isinstance(controles, dict):
+        controles = list(controles.values())
+    return any(isinstance(c, dict) and (c.get("type") or "").lower() in _CONTROLES_DE_COLOR
+               for c in controles)
+
+
+def _colores_vigentes(network_id: str, data: dict) -> dict:
+    """Colores capturados, sin los de luminarias cuyo perfil ya no tiene color.
+
+    Una CBU-PWM4 puede pasar de RGBW a un canal regulable desde la app de
+    Casambi y, en principio, conservar su ID. Lo capturado entonces sigue en el fichero hasta
+    la próxima captura, pero no debe verse: se filtra aquí, con el perfil que
+    trae la descarga actual, y lo usan igual la interfaz y el Excel.
+    """
+    fixtures = data.get("fixtures") or {}
+    perfil = {u.get("id"): fixtures.get(u.get("fixtureId"))
+              for u in data["network"].get("units", [])}
+    vigentes = {}
+    for scene_id, unidades in _load_scene_colors(str(network_id)).items():
+        filtrado = {uid: c for uid, c in unidades.items()
+                    if _admite_color(perfil.get(int(uid)) if uid.isdigit() else None)}
+        if filtrado:
+            vigentes[scene_id] = filtrado
+    return vigentes
+
+
 # ── Configuración de botones de pulsadores (anotada por el usuario) ──────────
 # El API no expone cuántos botones físicos tiene un pulsador ni qué hace cada
 # uno, así que se anota manualmente y se persiste en data/buttons_<red>.json
@@ -837,17 +934,25 @@ def _build_report_context(network_id: str, data: dict) -> dict:
 
     # Escenas con sus dispositivos e intensidades anotadas
     saved_levels = _load_scene_levels(str(network_id))
+    saved_colors = _colores_vigentes(str(network_id), data)
+    # Solo las de perfil conocido con color: la columna Color sale en las
+    # escenas que tienen alguna, antes incluso de la primera captura.
+    con_color = {u.get("id") for u in units
+                 if fixtures.get(u.get("fixtureId"), {}).get("controls")
+                 and _admite_color(fixtures.get(u.get("fixtureId")))}
     escenas = []
     for s in sorted(scenes, key=lambda s: s.get("position", 0)):
         raw = s.get("units", {})
         ids = [v.get("id") for v in (raw.values() if isinstance(raw, dict) else raw)]
         scene_levels = saved_levels.get(str(s.get("id")), {})
+        scene_colors = saved_colors.get(str(s.get("id")), {})
         devices = sorted(
             (
                 {
                     "id": i,
                     "name": unit_map.get(i, str(i)),
                     "level": scene_levels.get(str(i), ""),
+                    "color": scene_colors.get(str(i)),
                 }
                 for i in ids if i is not None
             ),
@@ -859,6 +964,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "type": s.get("type", "-"),
             "count": len(devices),
             "devices": devices,
+            "hay_color": any(d["color"] or d["id"] in con_color for d in devices),
         })
 
     # Catálogo de nombres por tipo, para el desplegable "Programado" de los
@@ -1274,6 +1380,7 @@ def network_excel(network_id):
         data["network"], data["state"],
         fixtures=data["fixtures"],
         scene_levels=_load_scene_levels(str(network_id)),
+        scene_colors=_colores_vigentes(str(network_id), data),
         button_config=_load_buttons(str(network_id)),
         sensor_config=_load_sensors(str(network_id)),
         schedules=_load_schedules(str(network_id)),
@@ -1693,6 +1800,7 @@ def scene_capture(network_id, scene_id):
     """
     Activa la escena en la red real (vía WebSocket) y captura el dimLevel
     que reportan las luminarias, guardándolo como intensidad de la escena.
+    De las que tienen color (RGBW) captura también el color y el blanco.
     Requiere un gateway online (celular o hardware) en la red.
     """
     client = _client_for(network_id)
@@ -1731,6 +1839,7 @@ def scene_capture(network_id, scene_id):
     # Esperar a que las luminarias apliquen la escena y reporten su nivel.
     # Reintenta hasta que alguna unidad confirme la escena activa.
     captured: dict[str, str] = {}
+    colores: dict[str, dict | None] = {}
     skipped: list[str] = []
     for wait in (3, 3, 4):
         time.sleep(wait)
@@ -1739,13 +1848,14 @@ def scene_capture(network_id, scene_id):
         except CasambiAPIError as e:
             return jsonify({"ok": False, "error": str(e)}), 502
 
-        captured, skipped = {}, []
+        captured, colores, skipped = {}, {}, []
         confirmed = False
         for u in state.get("units", []):
             if u.get("id") not in scene_unit_ids:
                 continue
             if u.get("online") and u.get("dimLevel") is not None:
                 captured[str(u["id"])] = str(round(u["dimLevel"] * 100))
+                colores[str(u["id"])] = _color_de_estado(u)
                 if str(u.get("activeSceneId")) == str(scene_id):
                     confirmed = True
             else:
@@ -1755,8 +1865,14 @@ def scene_capture(network_id, scene_id):
 
     for uid, level in captured.items():
         _save_scene_level(str(network_id), str(scene_id), uid, level)
+    _save_scene_colors(str(network_id), str(scene_id), colores)
 
-    return jsonify({"ok": True, "captured": captured, "skipped": skipped})
+    return jsonify({
+        "ok": True,
+        "captured": captured,
+        "colores": {uid: c for uid, c in colores.items() if c},
+        "skipped": skipped,
+    })
 
 
 @app.route("/logos/<path:filename>")

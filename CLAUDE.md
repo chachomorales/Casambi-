@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 244 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 250 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 208:
+# propósito para que PyInstaller no las meta en el .app. Los otros 214:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 244 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 250 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -196,6 +196,13 @@ guarda como JSON en `data/<tipo>_<network_id>.json`
 (`buttons_`, `sensors_`, `schedules_`, `scene_levels_`, `planos_`, `bitacora_`). Todo eso acaba en
 el Excel. **Al tocar esas hojas del informe, recuerda que su origen es el JSON local,
 no la API.**
+
+`scene_colors_` es el caso aparte: nadie lo teclea, lo escribe «Capturar niveles» al
+leer el estado de las luminarias con perfil de color (en las redes actuales, solo las
+CBU-PWM4 RGBW: controles `Color` con `rgb` y `White`). Se guarda sin mirar el perfil,
+pero se **muestra filtrado por el perfil vigente** (`_colores_vigentes()`): una CBU-PWM4
+puede pasar de RGBW a un canal desde la app de Casambi —conservando el ID, en principio: no se ha comprobado en una red real—, y su color
+viejo no debe verse como un hecho. Una captura posterior sin color lo borra del JSON.
 
 Los planos se pueden subir a mano (PDF vía PyMuPDF, o imagen) y colocar marcadores;
 la galería de Casambi (`network['photos']`) ya trae posiciones y se compone aparte.

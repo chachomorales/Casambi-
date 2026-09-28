@@ -363,7 +363,7 @@
             {% if s.devices %}
             <button class="btn-capture" data-scene="{{ s.id }}"
                     data-url="{{ url_for('scene_capture', network_id=network_id, scene_id=s.id) }}"
-                    title="Activa la escena en la red real y captura el nivel que reportan las luminarias. Requiere un gateway online.">
+                    title="Activa la escena en la red real y captura el nivel{% if s.hay_color %} y el color{% endif %} que reportan las luminarias. Requiere un gateway online.">
               ⚡ Capturar niveles
             </button>
             {% endif %}
@@ -372,7 +372,7 @@
           <td class="devices">
             {% if s.devices %}
             <table class="subtable">
-              <thead><tr><th>Dispositivo</th><th>Intensidad</th></tr></thead>
+              <thead><tr><th>Dispositivo</th><th>Intensidad</th>{% if s.hay_color %}<th>Color</th>{% endif %}</tr></thead>
               <tbody>
                 {% for d in s.devices %}
                 <tr>
@@ -386,6 +386,11 @@
                            data-scene="{{ s.id }}" data-unit="{{ d.id }}"
                            placeholder="–"> %
                   </td>
+                  {% if s.hay_color %}
+                  <td class="color-cell" data-scene="{{ s.id }}" data-unit="{{ d.id }}">
+                    {%- if d.color %}{% if d.color.rgb %}<span class="color-swatch" style="background: {{ d.color.rgb }}"></span>{{ d.color.rgb }}{% endif %}{% if d.color.blanco is not none %}<span class="color-blanco">Blanco {{ d.color.blanco }} %</span>{% endif %}{% else %}–{% endif -%}
+                  </td>
+                  {% endif %}
                 </tr>
                 {% endfor %}
               </tbody>
@@ -1354,6 +1359,25 @@
     if (!esCobertura) { pintarOpciones(); syncDelBtn(); }
   });
 
+  // Mismo contenido que la celda Color que pinta la plantilla
+  function pintarColor(color) {
+    if (!color) return ['–'];
+    const partes = [];
+    if (color.rgb) {
+      const muestra = document.createElement('span');
+      muestra.className = 'color-swatch';
+      muestra.style.background = color.rgb;
+      partes.push(muestra, color.rgb);
+    }
+    if (color.blanco != null) {
+      const blanco = document.createElement('span');
+      blanco.className = 'color-blanco';
+      blanco.textContent = `Blanco ${color.blanco} %`;
+      partes.push(blanco);
+    }
+    return partes;
+  }
+
   // Capturar niveles: activa la escena real y lee el dimLevel de las luminarias
   document.querySelectorAll('.btn-capture').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1374,6 +1398,15 @@
             input.classList.add('saved');
             setTimeout(() => input.classList.remove('saved'), 2000);
           }
+        });
+
+        // Color: solo existen celdas en las escenas con luminarias de color.
+        // Se repintan todas las de la escena, también las que ya no traen
+        // color: el servidor lo acaba de borrar.
+        document.querySelectorAll(
+          `.color-cell[data-scene="${btn.dataset.scene}"]`).forEach(celda => {
+          if (!(celda.dataset.unit in data.captured)) return;
+          celda.replaceChildren(...pintarColor((data.colores || {})[celda.dataset.unit]));
         });
 
         const n = Object.keys(data.captured).length;
