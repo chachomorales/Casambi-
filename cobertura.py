@@ -19,6 +19,12 @@ la red de su nivel (`network` del nivel, 1 si no hay). Los nombres que el
 usuario les puso van en `networkNames` en la raíz. Aquí cada nodo sale con su
 `red` ya resuelta, y el bloque del plano con `redes`, número → nombre.
 
+**Cada red puede traer su modo de radio** (formato 6, desde el 2026-09-28): en
+la misma entrada de `networkNames`, `mode` es `performance`, `balanced` o
+`longRange`. Una red con modo y sin nombre trae `name` vacío, y aquí sigue sin
+título propio. El modo solo le importa al cálculo de enlaces del simulador, que
+aquí no se hace.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -53,11 +59,12 @@ _DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;,]*);base64,(?P<payload>.*)$", re.
 EXTENSIONES = (".casambi", ".casambi.json")
 
 # Formatos que este importador sabe leer: 1 base, 2 con cuadro de cargas, 3 con
-# mediciones, 4 con varios niveles y 5 con redes Casambi por equipo. El
+# mediciones, 4 con varios niveles, 5 con redes Casambi por equipo y 6 con el
+# modo de radio de cada red. El
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 6)
+VERSIONES_CONOCIDAS = range(1, 7)
 
 
 class CoberturaError(Exception):

@@ -119,3 +119,17 @@ def test_una_red_invalida_no_importa_nada(cliente, datos_limpios):
     _sube(cliente, "dos")
     ruta = datos_limpios / f"planos_{RED_ID}.json"
     assert not ruta.exists() or json.loads(ruta.read_text()) == []
+
+
+def test_formato_6_con_modo_de_red_se_lee_igual():
+    """El modo va en la entrada de la red; una red con modo y sin nombre no
+    gana un título vacío."""
+    proyecto = json.loads(_proyecto(version=6))
+    proyecto["networkNames"] = [
+        {"network": 2, "name": "Pasillos", "mode": "longRange"},
+        {"network": 3, "name": "", "mode": "balanced"},
+    ]
+    redes = cobertura.redes_del_proyecto(json.dumps(proyecto).encode())
+    assert [(r["red"], r["titulo"]) for r in redes] == [
+        (1, "Red 1"), (2, "Red 2 · Pasillos"), (3, "Red 3"),
+    ]
