@@ -330,6 +330,21 @@ def capacidad_sensor(fixture: dict | None) -> dict:
     }
 
 
+def capacidad_de_unidad(unidad: dict, fixture: dict | None) -> dict:
+    """La capacidad que cuenta para decir «Sin lectura»: solo la de los sensores.
+
+    En un sensor, que el perfil diga presencia o luz significa que el aparato lo
+    es. En un driver no: el CBU-ASR y el CBU-A2D «DALI/BC/Sensors» tienen una
+    *entrada* de sensor que puede estar vacía, y hay perfiles RGBW de DMX con
+    presencia. Contarlos daba cientos de «Sin lectura» en Vistares, URL o UVG
+    (barrido del 2026-09-29), como si fueran sensores que no responden. De las
+    luminarias solo se enseña lo que llega de verdad (las McWong PSC-BL de los MM).
+    """
+    if unidad.get("type") != "Sensor":
+        return {"presencia": False, "lux": False}
+    return capacidad_sensor(fixture)
+
+
 def celdas_lectura(lectura: dict | None, capacidad: dict) -> dict:
     """Texto de Presencia y Luz para un sensor: la lectura, «Sin lectura» si
     podría medirla pero no llega nada, o None si no la mide."""
@@ -1102,7 +1117,7 @@ def _celdas_de_unidades(unidades: list, state: dict, fixtures: dict) -> dict:
     return {
         u.get("id"): celdas_lectura(
             lectura_sensor(state_units.get(u.get("id"), {})),
-            capacidad_sensor(fixtures.get(u.get("fixtureId"))))
+            capacidad_de_unidad(u, fixtures.get(u.get("fixtureId"))))
         for u in unidades
     }
 

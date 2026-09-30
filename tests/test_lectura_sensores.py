@@ -161,3 +161,30 @@ def test_excel_luminarias_lleva_el_sensor_integrado(cliente, luminaria_con_senso
     assert [c.value for c in ws[1]][-2:] == ["Presencia", "Luz (lx)"]
     assert [c.value for c in ws[2]][-2:] == ["Ausente", 4]
     assert ws.column_dimensions["A"].width < 20
+
+
+# ── Un perfil con presencia no convierte un driver en sensor ─────────────────
+
+def test_capacidad_solo_cuenta_en_sensores():
+    assert report.capacidad_de_unidad({"type": "Sensor"}, STARCO) == \
+        {"presencia": True, "lux": True}
+    # CBU-A2D «DALI/BC/Sensors»: entrada de sensor que puede estar vacía
+    assert report.capacidad_de_unidad({"type": "Luminaire"}, STARCO) == \
+        {"presencia": False, "lux": False}
+
+
+@pytest.fixture
+def driver_capaz_offline(app_cargada):
+    """La luminaria 1 tiene perfil con presencia y luz, pero no manda nada."""
+    cache = app_module._state["cache"][RED_ID]
+    cache["fixtures"] = {**cache["fixtures"], 100: {**cache["fixtures"][100], **STARCO}}
+    cache["state"] = {**STATE, "units": [{"id": u["id"], "online": False}
+                                         for u in STATE["units"]]}
+
+
+def test_driver_sin_lectura_no_gana_columnas(cliente, driver_capaz_offline):
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    panel = html[html.index('id="panel-luminarias"'):html.index('id="panel-sensores"')]
+    assert "<th>Presencia</th>" not in panel and "Sin lectura" not in panel
+    wb = load_workbook(io.BytesIO(cliente.get(f"/network/{RED_ID}/excel").data))
+    assert "Presencia" not in [c.value for c in wb["Luminarias"][1]]

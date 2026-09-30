@@ -51,7 +51,7 @@ from report import (
     _controls_summary,
     _fixture_controls_summary,
     NOTA_SIN_LECTURA,
-    capacidad_sensor,
+    capacidad_de_unidad,
     celdas_lectura,
     columnas_lectura,
     diagnostico_conectividad,
@@ -914,7 +914,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             # Presencia y luz: de los sensores y de las luminarias que los llevan
             # integrados (las McWong PSC-BL de los MM)
             "lectura": celdas_lectura(lectura_sensor(state_units.get(u.get("id"), {})),
-                                      capacidad_sensor(fixture)),
+                                      capacidad_de_unidad(u, fixture)),
         }
 
     elementos = sorted((enrich(u) for u in units),

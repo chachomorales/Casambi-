@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 270 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 273 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 234:
+# propósito para que PyInstaller no las meta en el .app. Los otros 236:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 270 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 273 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -365,6 +365,11 @@ cambiaban entre dos consultas seguidas: son vivos.
   dice «Sin lectura» en vez de desaparecer: en Aseguradora General N1, sin gateway
   en la nube, los siete STARCO llegaban con `controls: null` y la red parecía no
   tener fotosensores.
+- **Esa capacidad solo cuenta en unidades `Sensor`** (`capacidad_de_unidad()`). En un
+  driver, el perfil no prueba que haya sensor: el CBU-ASR y el CBU-A2D «DALI/BC/Sensors»
+  tienen una *entrada* que puede estar vacía, y hay perfiles RGBW de DMX con presencia.
+  Contarlos llenaba Vistares, URL o UVG de cientos de «Sin lectura». De luminarias y
+  drivers solo se enseña lo que llega de verdad.
 - Cada columna sale solo si alguna fila de la tabla la mide o puede medirla. La hora
   es la de la descarga: en el `title` de la celda y al pie de la hoja
   (`generate_report(leido_en=…)`).
