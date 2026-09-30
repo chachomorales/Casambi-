@@ -257,12 +257,20 @@
 
 <!-- Sensores -->
 <section class="tab-panel" id="panel-sensores">
+  {#- Presencia y luz vienen del estado, sin hora propia: la de la descarga.
+      Cada columna sale solo si algún sensor de la red la mide. #}
+  {% set lecturas = sensores|selectattr('lectura')|map(attribute='lectura')|list %}
+  {% set sen_presencia = lecturas|rejectattr('presencia', 'none')|list|length > 0 %}
+  {% set sen_lux = lecturas|rejectattr('lux', 'none')|list|length > 0 %}
+  {% set titulo_lectura = 'Lectura al descargar la red, ' ~ fetched_at.strftime('%d/%m/%Y %H:%M') ~ '. La API no da su hora propia.' %}
   <input type="search" class="table-search" placeholder="Buscar en sensores…" data-target="tbl-sensores">
   <div class="table-wrap">
     <table id="tbl-sensores">
       <thead><tr>
         <th>ID</th><th>Nombre</th><th>Tipo (API)</th><th>Fabricante</th>
         <th>Modelo</th><th>Dirección MAC</th><th>Firmware</th><th>Soporta</th>
+        {%- if sen_presencia %}<th>Presencia</th>{% endif %}
+        {%- if sen_lux %}<th>Luz</th>{% endif %}
         <th>Modo</th><th>Escena (Presencia)</th><th>Escena (Ausencia)</th>
       </tr></thead>
       <tbody>
@@ -272,6 +280,9 @@
           <td>{{ e.vendor }}</td><td>{{ e.model }}</td>
           <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td>
           <td>{{ e.controls }}</td>
+          {%- set l = e.lectura %}
+          {%- if sen_presencia %}{% if l and l.presencia is not none %}<td class="lectura-cell" title="{{ titulo_lectura }}">{{ 'Presente' if l.presencia else 'Ausente' }}</td>{% else %}<td>–</td>{% endif %}{% endif %}
+          {%- if sen_lux %}{% if l and l.lux is not none %}<td class="lectura-cell" title="{{ titulo_lectura }}">{{ l.lux }} lx</td>{% else %}<td>–</td>{% endif %}{% endif %}
           <td>
             <select class="sensor-modo" data-unit="{{ e.id }}">
               <option value="">—</option>

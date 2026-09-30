@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 256 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 264 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 220:
+# propósito para que PyInstaller no las meta en el .app. Los otros 228:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 256 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 264 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -349,6 +349,16 @@ en Luminarias y Conectividad solo si la red tiene alguna. **No lleva umbral de
 alarma** a propósito: no sabemos a partir de qué temperatura sufre ese driver, y
 acusar a equipos sanos es justo lo que esta sección evita. Si se consigue la ficha
 técnica, ahí va.
+
+**Presencia y luz de los sensores sí van en `controls`**, tipos `Presence`
+(`status`: `present`/`absent`) y `Lux` (`value`), pero **sin hora**. En el barrido
+del 2026-09-29 (40 redes), 58 sensores daban presencia y 14 también luz: los STARCO
+«PIR c/indicador + Fotosensor» (fixture 17027) de LANCO y los de fixture 9400 de los
+MM. Los lux cambiaban entre dos consultas seguidas, así que son vivos.
+`report.lectura_sensor()` solo los da si la unidad está `online`: offline conserva
+el último valor y parecería actual. En la pestaña y la hoja Sensores salen como
+«Presencia» y «Luz», solo si la red tiene alguno, con la hora de la descarga: en el
+`title` de la celda, y al pie de la hoja (`generate_report(leido_en=…)`).
 
 ## Convenciones
 

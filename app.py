@@ -51,6 +51,7 @@ from report import (
     _controls_summary,
     _fixture_controls_summary,
     diagnostico_conectividad,
+    lectura_sensor,
     temperatura_unidad,
     texto_temperatura,
     generate_report,
@@ -921,6 +922,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         s["modo"] = cfg.get("modo", "")
         s["escena_presencia"] = cfg.get("escena_presencia", "")
         s["escena_ausencia"] = cfg.get("escena_ausencia", "")
+        s["lectura"] = lectura_sensor(state_units.get(s["id"], {}))
 
     # Botones anotados de cada pulsador
     button_cfg = _load_buttons(str(network_id))
@@ -1414,6 +1416,7 @@ def network_excel(network_id):
         bitacora=_load_bitacora(str(network_id)),
         images_dir=images_dir,
         manual_planos=manual_planos,
+        leido_en=data.get("fetched_at"),
         output_dir=str(REPORTS_DIR),
     )
     return send_file(filepath.resolve(), as_attachment=True, download_name=filepath.name)

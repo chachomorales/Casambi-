@@ -461,6 +461,7 @@ td.empty { text-align: center; color: #999; padding: 24px; }
 .temp-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* La antigüedad va en segundo plano: el dato es la temperatura */
 .temp-hace { color: #889; font-size: 12px; }
+.lectura-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .level-input {
   width: 62px;

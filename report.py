@@ -285,6 +285,34 @@ def temperatura_unidad(live: dict) -> dict | None:
     return None
 
 
+def lectura_sensor(live: dict) -> dict | None:
+    """Presencia y luz que mide ahora un sensor, o None si no reporta ninguna.
+
+    A diferencia de la temperatura, van en `controls` (tipos `Presence` y
+    `Lux`) y sin `timestamp`: la única hora que se les puede dar es la de la
+    descarga. Cambian entre dos consultas seguidas, así que son vivas, pero
+    solo si el sensor responde; uno offline conserva su último valor, y
+    enseñarlo lo haría pasar por actual. Por eso, sin `online`, no hay lectura.
+
+    Medido en las 40 redes (2026-09-29): 58 sensores con presencia, 14 de ellos
+    también con luz (STARCO 17027 en LANCO, fixture 9400 en los MM).
+    """
+    if not live.get("online"):
+        return None
+    presencia = lux = None
+    for grupo in live.get("controls") or []:
+        for c in grupo if isinstance(grupo, list) else [grupo]:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "Presence" and c.get("status") in ("present", "absent"):
+                presencia = c["status"] == "present"
+            elif c.get("type") == "Lux" and isinstance(c.get("value"), (int, float)):
+                lux = round(c["value"])
+    if presencia is None and lux is None:
+        return None
+    return {"presencia": presencia, "lux": lux}
+
+
 def texto_temperatura(t: dict | None) -> str:
     """«35 °C · 27/09/2026 14:03», para el Excel y el título de la interfaz."""
     if not t:
@@ -1069,7 +1097,12 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
 
 
 def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | None = None,
-                    sensor_config: dict | None = None) -> None:
+                    sensor_config: dict | None = None,
+                    leido_en: datetime | None = None) -> None:
+    """
+    leido_en: hora de la descarga de la red. La presencia y la luz no traen
+    hora propia, así que es la única que se les puede dar, y va al pie.
+    """
     if fixtures is None:
         fixtures = {}
     if sensor_config is None:
@@ -1094,11 +1127,22 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
         "Versión Firmware", "Fixture ID", "Soporta",
         "Modo", "Escena (Presencia)", "Escena (Ausencia)",
     ]
+    state_units = {u.get("id"): u for u in state.get("units", [])}
+    lecturas = {u.get("id"): lectura_sensor(state_units.get(u.get("id"), {}))
+                for u in sensores}
+    # Cada columna, solo si algún sensor de la red la mide: como en la pestaña
+    con_presencia = any(l and l["presencia"] is not None for l in lecturas.values())
+    con_lux = any(l and l["lux"] is not None for l in lecturas.values())
+    if con_presencia:
+        columns.append("Presencia")
+    if con_lux:
+        columns.append("Luz (lx)")
     _write_header_row(ws, 1, columns)
 
     for row_idx, unit in enumerate(sensores, start=2):
         uid = unit.get("id")
         cfg = sensor_config.get(str(uid), {})
+        lectura = lecturas[uid] or {}
 
         values = [
             uid,
@@ -1112,6 +1156,11 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
             cfg.get("escena_presencia", "") or "-",
             cfg.get("escena_ausencia", "") or "-",
         ]
+        if con_presencia:
+            presencia = lectura.get("presencia")
+            values.append("-" if presencia is None else ("Presente" if presencia else "Ausente"))
+        if con_lux:
+            values.append("-" if lectura.get("lux") is None else lectura["lux"])
         _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
         ws.row_dimensions[row_idx].height = 18
 
@@ -1120,6 +1169,13 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
 
     _auto_width(ws)
     _freeze(ws)
+
+    # Después de los anchos: la nota es larga y ensancharía la columna del ID
+    if sensores and (con_presencia or con_lux) and leido_en:
+        nota = ws.cell(row=len(sensores) + 3, column=1, value=(
+            f"Presencia y luz: lectura al descargar la red, {leido_en:%d/%m/%Y %H:%M}. "
+            "La API no da su hora propia; un sensor que no responde sale sin lectura."))
+        nota.font = Font(size=9, italic=True, color=COLOR_TXT_REPOSO, name="Calibri")
 
 
 def _sheet_pulsadores(wb: Workbook, network: dict, state: dict,
@@ -1777,6 +1833,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
                     bitacora: list | None = None,
                     images_dir: Path | None = None,
                     manual_planos: list | None = None,
+                    leido_en: datetime | None = None,
                     output_dir: str = ".") -> Path:
     """
     Build the Excel report from raw API data and save it.
@@ -1790,6 +1847,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     images_dir: carpeta con las imágenes de la red (<image_id>.png) para la hoja Planos.
     manual_planos: [{"name", "path", "markers", "cobertura"}] — planos subidos
         manualmente; "cobertura" solo lo traen los importados del simulador.
+    leido_en: hora de la descarga de la red, la de la presencia y luz de los sensores.
     Returns the Path of the generated file.
     """
     if fixtures is None:
@@ -1803,7 +1861,8 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     _sheet_elementos(wb, network, state, fixtures)
     _sheet_luminarias(wb, network, state, fixtures)
     _sheet_pulsadores(wb, network, state, button_config=button_config)
-    _sheet_sensores(wb, network, state, fixtures, sensor_config=sensor_config)
+    _sheet_sensores(wb, network, state, fixtures, sensor_config=sensor_config,
+                    leido_en=leido_en)
     _sheet_grupos(wb, network)
     _sheet_escenas(wb, network, scene_levels=scene_levels, scene_colors=scene_colors)
     _sheet_horarios(wb, schedules=schedules)
