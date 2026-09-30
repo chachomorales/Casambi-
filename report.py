@@ -313,6 +313,61 @@ def lectura_sensor(live: dict) -> dict | None:
     return {"presencia": presencia, "lux": lux}
 
 
+def capacidad_sensor(fixture: dict | None) -> dict:
+    """Qué puede medir un sensor según su perfil, lo mida ahora o no.
+
+    Sirve para que un sensor sin lectura se vea como tal y no desaparezca: en
+    Aseguradora General N1 (2026-09-29) los siete STARCO con fotosensor salían
+    con `controls: null` porque la red no tenía gateway en la nube, y sin esto
+    las columnas no aparecían y parecía que no midieran nada.
+    """
+    fixture = fixture or {}
+    tipos = {str(c.get("type", "")).lower()
+             for c in fixture.get("controls") or [] if isinstance(c, dict)}
+    return {
+        "presencia": bool(fixture.get("isPresenceSensor")) or "presence" in tipos,
+        "lux": bool(fixture.get("isLightSensor")) or "lux" in tipos,
+    }
+
+
+def celdas_lectura(lectura: dict | None, capacidad: dict) -> dict:
+    """Texto de Presencia y Luz para un sensor: la lectura, «Sin lectura» si
+    podría medirla pero no llega nada, o None si no la mide."""
+    lectura = lectura or {}
+    celdas = {}
+    presencia = lectura.get("presencia")
+    if presencia is not None:
+        celdas["presencia"] = "Presente" if presencia else "Ausente"
+    elif capacidad.get("presencia"):
+        celdas["presencia"] = EST_SIN_LECTURA
+    else:
+        celdas["presencia"] = None
+    if lectura.get("lux") is not None:
+        celdas["lux"] = lectura["lux"]
+    elif capacidad.get("lux"):
+        celdas["lux"] = EST_SIN_LECTURA
+    else:
+        celdas["lux"] = None
+    return celdas
+
+
+def columnas_lectura(celdas: list) -> dict:
+    """Qué columnas de lectura lleva una tabla, y si hace falta la nota.
+
+    Cada una sale si alguna fila la mide o puede medirla: una red sin sensores
+    no gana columnas vacías.
+    """
+    return {
+        "presencia": any(c["presencia"] is not None for c in celdas),
+        "lux": any(c["lux"] is not None for c in celdas),
+        "sin": any(EST_SIN_LECTURA in c.values() for c in celdas),
+    }
+
+
+NOTA_SIN_LECTURA = ("«Sin lectura»: el sensor puede medirlo pero no responde. Si no "
+                    "responde ninguno de la red, lo normal es que falte un gateway en línea.")
+
+
 def texto_temperatura(t: dict | None) -> str:
     """«35 °C · 27/09/2026 14:03», para el Excel y el título de la interfaz."""
     if not t:
@@ -1041,7 +1096,44 @@ def _sheet_escenas(wb: Workbook, network: dict, scene_levels: dict | None = None
     _freeze(ws)
 
 
-def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict | None = None) -> None:
+def _celdas_de_unidades(unidades: list, state: dict, fixtures: dict) -> dict:
+    """Presencia y luz de cada unidad (id → celdas), para Luminarias y Sensores."""
+    state_units = {u.get("id"): u for u in state.get("units", [])}
+    return {
+        u.get("id"): celdas_lectura(
+            lectura_sensor(state_units.get(u.get("id"), {})),
+            capacidad_sensor(fixtures.get(u.get("fixtureId"))))
+        for u in unidades
+    }
+
+
+def _columnas_de_lectura(cols: dict) -> list:
+    return (["Presencia"] if cols["presencia"] else []) + (["Luz (lx)"] if cols["lux"] else [])
+
+
+def _valores_de_lectura(celda: dict, cols: dict) -> list:
+    return [("-" if celda[campo] is None else celda[campo])
+            for campo in ("presencia", "lux") if cols[campo]]
+
+
+def _notas_de_lectura(ws, fila: int, cols: dict, leido_en: datetime | None) -> None:
+    """Al pie de la hoja, después de `_auto_width`: la nota es larga y
+    ensancharía la primera columna."""
+    if not (cols["presencia"] or cols["lux"]):
+        return
+    notas = []
+    if leido_en:
+        notas.append(f"Presencia y luz: lectura al descargar la red, "
+                     f"{leido_en:%d/%m/%Y %H:%M}. La API no da su hora propia.")
+    if cols["sin"]:
+        notas.append(NOTA_SIN_LECTURA)
+    for i, texto in enumerate(notas):
+        nota = ws.cell(row=fila + i, column=1, value=texto)
+        nota.font = Font(size=9, italic=True, color=COLOR_TXT_REPOSO, name="Calibri")
+
+
+def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict | None = None,
+                      leido_en: datetime | None = None) -> None:
     if fixtures is None:
         fixtures = {}
     ws = wb.create_sheet("Luminarias")
@@ -1069,6 +1161,10 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
     con_temperatura = any(temperaturas.values())
     if con_temperatura:
         columns.append("Temperatura")
+    # Las McWong PSC-BL de los MM llevan presencia y luz integradas
+    celdas = _celdas_de_unidades(luminarias, state, fixtures)
+    cols = columnas_lectura(list(celdas.values()))
+    columns += _columnas_de_lectura(cols)
     _write_header_row(ws, 1, columns)
 
     for row_idx, unit in enumerate(luminarias, start=2):
@@ -1086,6 +1182,7 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
         ]
         if con_temperatura:
             values.append(texto_temperatura(temperaturas[uid]))
+        values += _valores_de_lectura(celdas[uid], cols)
         _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
         ws.row_dimensions[row_idx].height = 18
 
@@ -1094,6 +1191,8 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
 
     _auto_width(ws)
     _freeze(ws)
+    if luminarias:
+        _notas_de_lectura(ws, len(luminarias) + 3, cols, leido_en)
 
 
 def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | None = None,
@@ -1127,22 +1226,14 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
         "Versión Firmware", "Fixture ID", "Soporta",
         "Modo", "Escena (Presencia)", "Escena (Ausencia)",
     ]
-    state_units = {u.get("id"): u for u in state.get("units", [])}
-    lecturas = {u.get("id"): lectura_sensor(state_units.get(u.get("id"), {}))
-                for u in sensores}
-    # Cada columna, solo si algún sensor de la red la mide: como en la pestaña
-    con_presencia = any(l and l["presencia"] is not None for l in lecturas.values())
-    con_lux = any(l and l["lux"] is not None for l in lecturas.values())
-    if con_presencia:
-        columns.append("Presencia")
-    if con_lux:
-        columns.append("Luz (lx)")
+    celdas = _celdas_de_unidades(sensores, state, fixtures)
+    cols = columnas_lectura(list(celdas.values()))
+    columns += _columnas_de_lectura(cols)
     _write_header_row(ws, 1, columns)
 
     for row_idx, unit in enumerate(sensores, start=2):
         uid = unit.get("id")
         cfg = sensor_config.get(str(uid), {})
-        lectura = lecturas[uid] or {}
 
         values = [
             uid,
@@ -1156,11 +1247,7 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
             cfg.get("escena_presencia", "") or "-",
             cfg.get("escena_ausencia", "") or "-",
         ]
-        if con_presencia:
-            presencia = lectura.get("presencia")
-            values.append("-" if presencia is None else ("Presente" if presencia else "Ausente"))
-        if con_lux:
-            values.append("-" if lectura.get("lux") is None else lectura["lux"])
+        values += _valores_de_lectura(celdas[uid], cols)
         _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
         ws.row_dimensions[row_idx].height = 18
 
@@ -1170,12 +1257,8 @@ def _sheet_sensores(wb: Workbook, network: dict, state: dict, fixtures: dict | N
     _auto_width(ws)
     _freeze(ws)
 
-    # Después de los anchos: la nota es larga y ensancharía la columna del ID
-    if sensores and (con_presencia or con_lux) and leido_en:
-        nota = ws.cell(row=len(sensores) + 3, column=1, value=(
-            f"Presencia y luz: lectura al descargar la red, {leido_en:%d/%m/%Y %H:%M}. "
-            "La API no da su hora propia; un sensor que no responde sale sin lectura."))
-        nota.font = Font(size=9, italic=True, color=COLOR_TXT_REPOSO, name="Calibri")
+    if sensores:
+        _notas_de_lectura(ws, len(sensores) + 3, cols, leido_en)
 
 
 def _sheet_pulsadores(wb: Workbook, network: dict, state: dict,
@@ -1847,7 +1930,8 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     images_dir: carpeta con las imágenes de la red (<image_id>.png) para la hoja Planos.
     manual_planos: [{"name", "path", "markers", "cobertura"}] — planos subidos
         manualmente; "cobertura" solo lo traen los importados del simulador.
-    leido_en: hora de la descarga de la red, la de la presencia y luz de los sensores.
+    leido_en: hora de la descarga de la red, la de la presencia y luz de los sensores
+        y de las luminarias que los llevan integrados.
     Returns the Path of the generated file.
     """
     if fixtures is None:
@@ -1859,7 +1943,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
     _sheet_red(wb, network, state)
     _sheet_conectividad(wb, network, state)
     _sheet_elementos(wb, network, state, fixtures)
-    _sheet_luminarias(wb, network, state, fixtures)
+    _sheet_luminarias(wb, network, state, fixtures, leido_en=leido_en)
     _sheet_pulsadores(wb, network, state, button_config=button_config)
     _sheet_sensores(wb, network, state, fixtures, sensor_config=sensor_config,
                     leido_en=leido_en)

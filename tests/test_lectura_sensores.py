@@ -82,3 +82,82 @@ def test_excel_sin_lecturas_no_gana_columnas(cliente):
     wb = load_workbook(io.BytesIO(cliente.get(f"/network/{RED_ID}/excel").data))
     cabecera = [c.value for c in wb["Sensores"][1]]
     assert "Presencia" not in cabecera and "Luz (lx)" not in cabecera
+
+
+# ── Sensores que podrían medir pero no mandan nada ───────────────────────────
+
+STARCO = {"type": "Sensor", "isLightSensor": True, "isPresenceSensor": True,
+          "controls": [{"type": "presence"}, {"type": "lux"}, {"type": "placeholder"}]}
+
+
+def test_capacidad_sale_del_perfil():
+    assert report.capacidad_sensor(STARCO) == {"presencia": True, "lux": True}
+    assert report.capacidad_sensor({"controls": [{"type": "presence"}]}) == \
+        {"presencia": True, "lux": False}
+    assert report.capacidad_sensor({"controls": {}}) == {"presencia": False, "lux": False}
+    assert report.capacidad_sensor(None) == {"presencia": False, "lux": False}
+
+
+def test_celdas_distinguen_sin_lectura_de_no_lo_mide():
+    capaz = {"presencia": True, "lux": True}
+    assert report.celdas_lectura({"presencia": False, "lux": 12}, capaz) == \
+        {"presencia": "Ausente", "lux": 12}
+    assert report.celdas_lectura(None, capaz) == \
+        {"presencia": "Sin lectura", "lux": "Sin lectura"}
+    assert report.celdas_lectura(None, {"presencia": True, "lux": False}) == \
+        {"presencia": "Sin lectura", "lux": None}
+
+
+@pytest.fixture
+def capaz_sin_gateway(app_cargada):
+    """El sensor 2 es un STARCO con fotosensor, pero la red no llega a la nube."""
+    cache = app_module._state["cache"][RED_ID]
+    cache["fixtures"] = {**cache["fixtures"], 101: {**cache["fixtures"][101], **STARCO}}
+    cache["state"] = {**STATE, "gateway": {},
+                      "units": [{"id": u["id"], "online": False} for u in STATE["units"]]}
+
+
+def test_pestana_dice_sin_lectura(cliente, capaz_sin_gateway):
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert "<th>Presencia</th>" in html and "<th>Luz</th>" in html
+    assert html.count(">Sin lectura</td>") == 2
+    assert "falte un gateway en línea" in html
+
+
+def test_excel_dice_sin_lectura(cliente, capaz_sin_gateway):
+    wb = load_workbook(io.BytesIO(cliente.get(f"/network/{RED_ID}/excel").data))
+    ws = wb["Sensores"]
+    assert [c.value for c in ws[1]][-2:] == ["Presencia", "Luz (lx)"]
+    assert [c.value for c in ws[2]][-2:] == ["Sin lectura", "Sin lectura"]
+    notas = [c.value for c in ws["A"] if isinstance(c.value, str)]
+    assert any("falte un gateway en línea" in n for n in notas)
+
+
+# ── Luminarias con sensor integrado (McWong PSC-BL de los MM) ────────────────
+
+@pytest.fixture
+def luminaria_con_sensor(app_cargada):
+    """La luminaria 1 lleva presencia y luz: ausente, 4 lx."""
+    cache = app_module._state["cache"][RED_ID]
+    cache["fixtures"] = {**cache["fixtures"], 100: {
+        **cache["fixtures"][100], "isLightSensor": True, "isPresenceSensor": True,
+        "controls": [{"type": "presence"}, {"type": "lux"}, {"type": "dimmer"}]}}
+    estado = {**STATE, "units": [dict(u) for u in STATE["units"]]}
+    estado["units"][0]["controls"] = [[AUSENTE, {"type": "Lux", "value": 4.0},
+                                       {"type": "Dimmer", "value": 1.0}]]
+    cache["state"] = estado
+
+
+def test_pestana_luminarias_muestra_el_sensor_integrado(cliente, luminaria_con_sensor):
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    panel = html[html.index('id="panel-luminarias"'):html.index('id="panel-sensores"')]
+    assert "<th>Presencia</th>" in panel and "<th>Luz</th>" in panel
+    assert ">Ausente</td>" in panel and ">4 lx</td>" in panel
+
+
+def test_excel_luminarias_lleva_el_sensor_integrado(cliente, luminaria_con_sensor):
+    wb = load_workbook(io.BytesIO(cliente.get(f"/network/{RED_ID}/excel").data))
+    ws = wb["Luminarias"]
+    assert [c.value for c in ws[1]][-2:] == ["Presencia", "Luz (lx)"]
+    assert [c.value for c in ws[2]][-2:] == ["Ausente", 4]
+    assert ws.column_dimensions["A"].width < 20

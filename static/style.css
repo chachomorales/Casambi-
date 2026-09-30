@@ -462,6 +462,9 @@ td.empty { text-align: center; color: #999; padding: 24px; }
 /* La antigüedad va en segundo plano: el dato es la temperatura */
 .temp-hace { color: #889; font-size: 12px; }
 .lectura-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Puede medirlo pero no llega nada: gris, para que no se lea como un valor */
+.lectura-sin { color: #99a; font-style: italic; }
+.sensores-nota { margin: 0 0 8px; }
 
 .level-input {
   width: 62px;

@@ -50,6 +50,10 @@ from report import (
     _classify_unit,
     _controls_summary,
     _fixture_controls_summary,
+    NOTA_SIN_LECTURA,
+    capacidad_sensor,
+    celdas_lectura,
+    columnas_lectura,
     diagnostico_conectividad,
     lectura_sensor,
     temperatura_unidad,
@@ -121,6 +125,11 @@ def hace(momento: datetime | None) -> str:
 
 
 app.add_template_global(texto_temperatura, "texto_temperatura")
+
+
+@app.template_global("columnas_lectura")
+def _columnas_lectura_de(filas: list) -> dict:
+    return columnas_lectura([f["lectura"] for f in filas])
 
 
 LOGOS_DIR = Path(__file__).parent / "logos"
@@ -902,6 +911,10 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "group": group_map.get(gid, "-") if gid else "-",
             "controls": _fixture_controls_summary(fixture) or _controls_summary(u) or "-",
             "temperatura": temperatura_unidad(state_units.get(u.get("id"), {})),
+            # Presencia y luz: de los sensores y de las luminarias que los llevan
+            # integrados (las McWong PSC-BL de los MM)
+            "lectura": celdas_lectura(lectura_sensor(state_units.get(u.get("id"), {})),
+                                      capacidad_sensor(fixture)),
         }
 
     elementos = sorted((enrich(u) for u in units),
@@ -922,7 +935,6 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         s["modo"] = cfg.get("modo", "")
         s["escena_presencia"] = cfg.get("escena_presencia", "")
         s["escena_ausencia"] = cfg.get("escena_ausencia", "")
-        s["lectura"] = lectura_sensor(state_units.get(s["id"], {}))
 
     # Botones anotados de cada pulsador
     button_cfg = _load_buttons(str(network_id))
@@ -1016,6 +1028,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         "network_id": network_id,
         "network": network,
         "fetched_at": data["fetched_at"],
+        "nota_sin_lectura": NOTA_SIN_LECTURA,
         "catalogo_botones": catalogo_botones,
         "conexion": diagnostico_conectividad(network, data["state"]),
         "summary": {

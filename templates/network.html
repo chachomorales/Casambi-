@@ -2,6 +2,23 @@
 {% block title %}{{ network.name }} — Informe Casambi{% endblock %}
 
 {% block content %}
+{#- Presencia y luz (Luminarias y Sensores). Vienen del estado sin hora propia:
+    la única es la de la descarga. Cada columna sale si alguna unidad de la
+    tabla la mide o, por su perfil, podría medirla; entonces dice «Sin lectura». #}
+{% set titulo_lectura = 'Lectura al descargar la red, ' ~ fetched_at.strftime('%d/%m/%Y %H:%M') ~ '. La API no da su hora propia.' %}
+{% macro cabecera_lectura(c) -%}
+  {%- if c.presencia %}<th>Presencia</th>{% endif %}
+  {%- if c.lux %}<th>Luz</th>{% endif %}
+{%- endmacro %}
+{% macro td_lectura(l, c) -%}
+  {%- for campo in ['presencia', 'lux'] if c[campo] %}
+    {%- set v = l[campo] %}
+    {%- if v == 'Sin lectura' %}<td class="lectura-cell lectura-sin" title="{{ nota_sin_lectura }}">Sin lectura</td>
+    {%- elif v is none %}<td>–</td>
+    {%- else %}<td class="lectura-cell" title="{{ titulo_lectura }}">{{ v }}{% if campo == 'lux' %} lx{% endif %}</td>
+    {%- endif %}
+  {%- endfor %}
+{%- endmacro %}
 <header class="page-header">
   <div>
     <h1>{{ network.name or 'Red sin nombre' }}</h1>
@@ -166,6 +183,8 @@
 <section class="tab-panel" id="panel-luminarias">
   {#- Solo con luminarias que reportan temperatura (hoy, las Eulum TRED) #}
   {% set lum_temperatura = luminarias|selectattr('temperatura')|list|length > 0 %}
+  {% set lect_lum = columnas_lectura(luminarias) %}
+  {% if lect_lum.sin %}<p class="hint sensores-nota">{{ nota_sin_lectura }}</p>{% endif %}
   <input type="search" class="table-search" placeholder="Buscar en luminarias…" data-target="tbl-luminarias">
   <div class="table-wrap">
     <table id="tbl-luminarias">
@@ -173,6 +192,7 @@
         <th>ID</th><th>Nombre</th><th>Fabricante</th><th>Modelo</th>
         <th>Dirección MAC</th><th>Firmware</th><th>Grupo</th><th>Soporta</th>
         {%- if lum_temperatura %}<th>Temperatura</th>{% endif %}
+        {{- cabecera_lectura(lect_lum) }}
       </tr></thead>
       <tbody>
         {% for e in luminarias %}
@@ -180,6 +200,7 @@
           <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.vendor }}</td><td>{{ e.model }}</td>
           <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td><td>{{ e.group }}</td><td>{{ e.controls }}</td>
           {%- if lum_temperatura %}{% if e.temperatura %}<td class="temp-cell" title="Última lectura: {{ texto_temperatura(e.temperatura) }}">{{ e.temperatura.grados }} °C{% if e.temperatura.leida %} <span class="temp-hace">· {{ e.temperatura.leida|hace }}</span>{% endif %}</td>{% else %}<td>–</td>{% endif %}{% endif %}
+          {{- td_lectura(e.lectura, lect_lum) }}
         </tr>
         {% else %}
         <tr><td colspan="8" class="empty">No se encontraron luminarias en esta red.</td></tr>
@@ -257,20 +278,15 @@
 
 <!-- Sensores -->
 <section class="tab-panel" id="panel-sensores">
-  {#- Presencia y luz vienen del estado, sin hora propia: la de la descarga.
-      Cada columna sale solo si algún sensor de la red la mide. #}
-  {% set lecturas = sensores|selectattr('lectura')|map(attribute='lectura')|list %}
-  {% set sen_presencia = lecturas|rejectattr('presencia', 'none')|list|length > 0 %}
-  {% set sen_lux = lecturas|rejectattr('lux', 'none')|list|length > 0 %}
-  {% set titulo_lectura = 'Lectura al descargar la red, ' ~ fetched_at.strftime('%d/%m/%Y %H:%M') ~ '. La API no da su hora propia.' %}
+  {% set lect = columnas_lectura(sensores) %}
+  {% if lect.sin %}<p class="hint sensores-nota">{{ nota_sin_lectura }}</p>{% endif %}
   <input type="search" class="table-search" placeholder="Buscar en sensores…" data-target="tbl-sensores">
   <div class="table-wrap">
     <table id="tbl-sensores">
       <thead><tr>
         <th>ID</th><th>Nombre</th><th>Tipo (API)</th><th>Fabricante</th>
         <th>Modelo</th><th>Dirección MAC</th><th>Firmware</th><th>Soporta</th>
-        {%- if sen_presencia %}<th>Presencia</th>{% endif %}
-        {%- if sen_lux %}<th>Luz</th>{% endif %}
+        {{- cabecera_lectura(lect) }}
         <th>Modo</th><th>Escena (Presencia)</th><th>Escena (Ausencia)</th>
       </tr></thead>
       <tbody>
@@ -280,9 +296,7 @@
           <td>{{ e.vendor }}</td><td>{{ e.model }}</td>
           <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td>
           <td>{{ e.controls }}</td>
-          {%- set l = e.lectura %}
-          {%- if sen_presencia %}{% if l and l.presencia is not none %}<td class="lectura-cell" title="{{ titulo_lectura }}">{{ 'Presente' if l.presencia else 'Ausente' }}</td>{% else %}<td>–</td>{% endif %}{% endif %}
-          {%- if sen_lux %}{% if l and l.lux is not none %}<td class="lectura-cell" title="{{ titulo_lectura }}">{{ l.lux }} lx</td>{% else %}<td>–</td>{% endif %}{% endif %}
+          {{- td_lectura(e.lectura, lect) }}
           <td>
             <select class="sensor-modo" data-unit="{{ e.id }}">
               <option value="">—</option>
