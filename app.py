@@ -56,7 +56,9 @@ from report import (
     columnas_lectura,
     diagnostico_conectividad,
     lectura_sensor,
+    medida_electrica,
     temperatura_unidad,
+    texto_medida,
     texto_temperatura,
     generate_report,
 )
@@ -125,6 +127,7 @@ def hace(momento: datetime | None) -> str:
 
 
 app.add_template_global(texto_temperatura, "texto_temperatura")
+app.add_template_global(texto_medida, "texto_medida")
 
 
 @app.template_global("columnas_lectura")
@@ -911,6 +914,7 @@ def _build_report_context(network_id: str, data: dict) -> dict:
             "group": group_map.get(gid, "-") if gid else "-",
             "controls": _fixture_controls_summary(fixture) or _controls_summary(u) or "-",
             "temperatura": temperatura_unidad(state_units.get(u.get("id"), {})),
+            "medida": medida_electrica(state_units.get(u.get("id"), {})),
             # Presencia y luz: de los sensores y de las luminarias que los llevan
             # integrados (las McWong PSC-BL de los MM)
             "lectura": celdas_lectura(lectura_sensor(state_units.get(u.get("id"), {})),

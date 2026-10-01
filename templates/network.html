@@ -183,6 +183,8 @@
 <section class="tab-panel" id="panel-luminarias">
   {#- Solo con luminarias que reportan temperatura (hoy, las Eulum TRED) #}
   {% set lum_temperatura = luminarias|selectattr('temperatura')|list|length > 0 %}
+  {#- Y solo con módulos de medición de energía (hoy, el McWong PSC-WCM-450) #}
+  {% set lum_medida = luminarias|selectattr('medida')|list|length > 0 %}
   {% set lect_lum = columnas_lectura(luminarias) %}
   {% if lect_lum.sin %}<p class="hint sensores-nota">{{ nota_sin_lectura }}</p>{% endif %}
   <input type="search" class="table-search" placeholder="Buscar en luminarias…" data-target="tbl-luminarias">
@@ -192,6 +194,7 @@
         <th>ID</th><th>Nombre</th><th>Fabricante</th><th>Modelo</th>
         <th>Dirección MAC</th><th>Firmware</th><th>Grupo</th><th>Soporta</th>
         {%- if lum_temperatura %}<th>Temperatura</th>{% endif %}
+        {%- if lum_medida %}<th>Medición eléctrica</th>{% endif %}
         {{- cabecera_lectura(lect_lum) }}
       </tr></thead>
       <tbody>
@@ -200,6 +203,7 @@
           <td>{{ e.id }}</td><td>{{ e.name }}</td><td>{{ e.vendor }}</td><td>{{ e.model }}</td>
           <td class="mono">{{ e.address }}</td><td>{{ e.firmware }}</td><td>{{ e.group }}</td><td>{{ e.controls }}</td>
           {%- if lum_temperatura %}{% if e.temperatura %}<td class="temp-cell" title="Última lectura: {{ texto_temperatura(e.temperatura) }}">{{ e.temperatura.grados }} °C{% if e.temperatura.leida %} <span class="temp-hace">· {{ e.temperatura.leida|hace }}</span>{% endif %}</td>{% else %}<td>–</td>{% endif %}{% endif %}
+          {%- if lum_medida %}{% if e.medida %}<td class="temp-cell" title="Última lectura: {{ texto_medida(e.medida) }}">{{ texto_medida(e.medida, con_fecha=False) }}{% if e.medida.leida %} <span class="temp-hace">· {{ e.medida.leida|hace }}</span>{% endif %}</td>{% else %}<td>–</td>{% endif %}{% endif %}
           {{- td_lectura(e.lectura, lect_lum) }}
         </tr>
         {% else %}

@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 273 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 279 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 236:
+# propósito para que PyInstaller no las meta en el .app. Los otros 242:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 273 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 279 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -349,6 +349,18 @@ en Luminarias y Conectividad solo si la red tiene alguna. **No lleva umbral de
 alarma** a propósito: no sabemos a partir de qué temperatura sufre ese driver, y
 acusar a equipos sanos es justo lo que esta sección evita. Si se consigue la ficha
 técnica, ahí va.
+
+**La medición de energía va en `sensors`, igual que la temperatura.** El McWong
+PSC-WCM-450-Power-Metering (fixture 31636) es `Luminaire` para la API y su perfil
+declara cuatro sensores enteros: `Voltage` (V), `Current` (mA), `Power` (W) y
+`Energy` (Wh). El estado los manda sin unidad y con `timestamp`, que es la última
+lectura que subió, no la de ahora: en el Lab (2026-10-01), con el módulo en línea y
+carga puesta, los cuatro siguieron en 0 y la hora quieta durante más de diez minutos.
+Parece que al módulo le falta algún ajuste para medir; está pendiente preguntarlo a
+la fábrica. `report.medida_electrica()` los lee y se quedan con la hora más vieja.
+Salen solo en Luminarias: en la pestaña, en una columna con la antigüedad, y en la
+hoja, una columna numérica por medida para poder sumar. Hay otros cuatro en
+Aseguradora General N1 (ids 7, 13, 16 y 17), en una red sin gateway en la nube.
 
 **Presencia y luz sí van en `controls`**, tipos `Presence` (`status`:
 `present`/`absent`) y `Lux` (`value`), pero **sin hora**. En el barrido del

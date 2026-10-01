@@ -392,6 +392,54 @@ def texto_temperatura(t: dict | None) -> str:
     return f"{t['grados']} °C · {t['leida']:%d/%m/%Y %H:%M}"
 
 
+# Lo que mide un módulo de medición de energía (hoy, el McWong
+# PSC-WCM-450-Power-Metering, fixture 31636). Las unidades son las de su
+# perfil, que declara los cuatro como enteros; el estado no las repite.
+MEDIDAS_ELECTRICAS = (
+    ("Voltage", "tension",   "V",  "Tensión"),
+    ("Current", "corriente", "mA", "Corriente"),
+    ("Power",   "potencia",  "W",  "Potencia"),
+    ("Energy",  "energia",   "Wh", "Energía"),
+)
+
+
+def medida_electrica(live: dict) -> dict | None:
+    """Última medida eléctrica de la unidad, con la hora de la lectura.
+
+    Va en `sensors`, como la temperatura, y como ella es la última lectura que
+    llegó a la nube, no la de ahora: en el Lab (2026-10-01) la hora siguió
+    quieta varios minutos con el módulo encendido y en línea. Por eso no se da
+    nunca sin su fecha. Si las medidas traen horas distintas se toma la más
+    vieja, para no hacer pasar por reciente un valor que no lo es.
+    """
+    nombres = {nombre: (campo, unidad) for nombre, campo, unidad, _ in MEDIDAS_ELECTRICAS}
+    valores, marcas = {}, []
+    for s in live.get("sensors") or []:
+        if s.get("name") not in nombres or not isinstance(s.get("value"), (int, float)):
+            continue
+        valores[nombres[s["name"]][0]] = round(s["value"])
+        if isinstance(s.get("timestamp"), (int, float)):
+            marcas.append(s["timestamp"])
+    if not valores:
+        return None
+    leida = None
+    if marcas:
+        leida = datetime.fromtimestamp(
+            min(marcas) / 1000, config.zona_horaria()).replace(tzinfo=None)
+    return {**valores, "leida": leida}
+
+
+def texto_medida(m: dict | None, con_fecha: bool = True) -> str:
+    """«230 V · 180 mA · 41 W · 1250 Wh · 01/10/2026 16:52»."""
+    if not m:
+        return "-"
+    partes = [f"{m[campo]} {unidad}" for _, campo, unidad, _ in MEDIDAS_ELECTRICAS
+              if campo in m]
+    if con_fecha and m.get("leida"):
+        partes.append(f"{m['leida']:%d/%m/%Y %H:%M}")
+    return " · ".join(partes)
+
+
 def diagnostico_conectividad(network: dict, state: dict) -> dict:
     """
     Estado de conexión de la red y de cada dispositivo, para reportar problemas.
@@ -1176,6 +1224,13 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
     con_temperatura = any(temperaturas.values())
     if con_temperatura:
         columns.append("Temperatura")
+    # Una columna numérica por medida, para poder sumar consumos en el Excel
+    medidas = {u.get("id"): medida_electrica(state_units.get(u.get("id"), {}))
+               for u in luminarias}
+    con_medida = any(medidas.values())
+    if con_medida:
+        columns += [f"{titulo} ({unidad})" for _, _, unidad, titulo in MEDIDAS_ELECTRICAS]
+        columns.append("Lectura eléctrica")
     # Las McWong PSC-BL de los MM llevan presencia y luz integradas
     celdas = _celdas_de_unidades(luminarias, state, fixtures)
     cols = columnas_lectura(list(celdas.values()))
@@ -1197,6 +1252,10 @@ def _sheet_luminarias(wb: Workbook, network: dict, state: dict, fixtures: dict |
         ]
         if con_temperatura:
             values.append(texto_temperatura(temperaturas[uid]))
+        if con_medida:
+            m = medidas[uid] or {}
+            values += [m.get(campo, "-") for _, campo, _, _ in MEDIDAS_ELECTRICAS]
+            values.append(f"{m['leida']:%d/%m/%Y %H:%M}" if m.get("leida") else "-")
         values += _valores_de_lectura(celdas[uid], cols)
         _write_data_row(ws, row_idx, values, alternate=(row_idx % 2 == 0))
         ws.row_dimensions[row_idx].height = 18
