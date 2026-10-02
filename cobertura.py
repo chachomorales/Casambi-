@@ -59,12 +59,13 @@ _DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;,]*);base64,(?P<payload>.*)$", re.
 EXTENSIONES = (".casambi", ".casambi.json")
 
 # Formatos que este importador sabe leer: 1 base, 2 con cuadro de cargas, 3 con
-# mediciones, 4 con varios niveles, 5 con redes Casambi por equipo y 6 con el
-# modo de radio de cada red. El
+# mediciones, 4 con varios niveles, 5 con redes Casambi por equipo, 6 con el
+# modo de radio de cada red y 7 con líneas dibujadas sobre el plano (`lines`,
+# que aquí no se usan: son dibujo, no equipo). El
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 7)
+VERSIONES_CONOCIDAS = range(1, 8)
 
 
 class CoberturaError(Exception):
