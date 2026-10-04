@@ -25,6 +25,12 @@ la misma entrada de `networkNames`, `mode` es `performance`, `balanced` o
 título propio. El modo solo le importa al cálculo de enlaces del simulador, que
 aquí no se hace.
 
+**Los sensores locales no son Casambi** (desde el 2026-10-03). El simulador
+coloca en el plano sensores de línea sin radio —bodegas, baños— por su carga y
+su zona de detección; los guarda como nodos con `"radio": false`. Aquí no
+existen: no se importan, no se cuentan en ninguna red y no se ofrecen para
+asociar a una unidad real.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -135,12 +141,18 @@ def _red_del_nodo(nodo: dict, red_del_nivel: int) -> int:
     return _red(nodo.get("network")) or red_del_nivel
 
 
+def _es_casambi(nodo) -> bool:
+    """Un nodo de la red. El simulador marca con `"radio": false` lo que pone
+    en el plano sin ser Casambi —un sensor de línea—; sin la marca, es nodo."""
+    return isinstance(nodo, dict) and nodo.get("radio") is not False
+
+
 def _nodos_por_red(nivel: dict) -> dict[int, int]:
     """Cuántos nodos de cada red hay en un nivel."""
     red_del_nivel = _red(nivel.get("network")) or 1
     cuenta: dict[int, int] = {}
     for nodo in nivel.get("nodes") or []:
-        if isinstance(nodo, dict):
+        if _es_casambi(nodo):
             red = _red_del_nodo(nodo, red_del_nivel)
             cuenta[red] = cuenta.get(red, 0) + 1
     return cuenta
@@ -228,7 +240,7 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None,
 
     nodos = []
     for nodo in nivel.get("nodes") or []:
-        if not isinstance(nodo, dict):
+        if not _es_casambi(nodo):
             continue
         if red is not None and _red_del_nodo(nodo, red_del_nivel) != red:
             continue

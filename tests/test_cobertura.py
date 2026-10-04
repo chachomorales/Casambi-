@@ -133,3 +133,21 @@ def test_formato_6_con_modo_de_red_se_lee_igual():
     assert [(r["red"], r["titulo"]) for r in redes] == [
         (1, "Red 1"), (2, "Red 2 · Pasillos"), (3, "Red 3"),
     ]
+
+
+def test_los_sensores_locales_no_son_nodos():
+    """Lo que el simulador marca sin radio no se importa ni se cuenta."""
+    proyecto = json.loads(_proyecto())
+    sensor = _nodo("s", 4)
+    sensor["radio"] = False
+    proyecto["levels"][0]["nodes"].append(sensor)
+    data = json.dumps(proyecto).encode()
+    redes = cobertura.redes_del_proyecto(data)
+    assert [(r["red"], r["nodos"]) for r in redes] == [(1, 2), (2, 1), (3, 1)]
+    planos, _ = cobertura.parse_proyecto(data)
+    assert [n["label"] for n in planos[0][1]["nodos"]] == ["a", "b", "c"]
+    # Un nivel con solo sensores locales no aporta una red.
+    proyecto["levels"].append(_nivel("N2", 4, [sensor]))
+    redes = cobertura.redes_del_proyecto(json.dumps(proyecto).encode())
+    assert 4 not in [r["red"] for r in redes]
+
