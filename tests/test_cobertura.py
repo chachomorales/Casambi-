@@ -172,3 +172,10 @@ def test_formato_9_ignora_las_luminarias_del_plano():
                                           "x": 1, "y": 1}]
     planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
     assert len(planos[0][1]["nodos"]) == 3
+
+
+def test_formato_10_se_abre_igual():
+    """Calibre y caída de tensión son del cuadro de cargas, no de la radio."""
+    proyecto = json.loads(_proyecto(version=10))
+    planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
+    assert len(planos[0][1]["nodos"]) == 3

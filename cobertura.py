@@ -43,6 +43,10 @@ en `drivers_dali` para el informe; None si no se indicó o no es un Salvador.
 tienen radio, así que aquí no se importan: los nodos y su cobertura son los
 mismos que sin ellas.
 
+**Formato 10** (desde el 2026-10-20): los retornos dibujados pueden decir su
+calibre, metros extra y bajada a cada luminaria, para la caída de tensión, y
+cruzar de un nivel a otro. Nada de eso es radio: aquí tampoco se importa.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -84,7 +88,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 10)
+VERSIONES_CONOCIDAS = range(1, 11)
 
 
 class CoberturaError(Exception):
