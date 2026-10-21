@@ -161,3 +161,14 @@ def test_formato_8_trae_los_drivers_dali_del_salvador():
     planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
     nodos = planos[0][1]["nodos"]
     assert [n["drivers_dali"] for n in nodos] == [10, None, None]
+
+
+def test_formato_9_ignora_las_luminarias_del_plano():
+    """Las luminarias no tienen radio: el proyecto se importa con los mismos nodos."""
+    proyecto = json.loads(_proyecto(version=9))
+    proyecto["fixtureTypes"] = [{"id": "t1", "code": "D1", "wattsEach": 12,
+                                 "voltage": 120, "current": "ac"}]
+    proyecto["levels"][0]["fixtures"] = [{"id": "f1", "typeId": "t1", "label": "D1-1",
+                                          "x": 1, "y": 1}]
+    planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
+    assert len(planos[0][1]["nodos"]) == 3

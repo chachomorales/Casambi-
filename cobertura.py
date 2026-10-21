@@ -37,6 +37,12 @@ Casambi cada driver es una unidad y el Salvador ninguna. Aquí el Salvador se
 importa como un nodo más —está en el plano y repite la malla— y el número viaja
 en `drivers_dali` para el informe; None si no se indicó o no es un Salvador.
 
+**El simulador puede llevar luminarias en el plano** (formato 9, desde el
+2026-10-20): tipos de luminaria del proyecto (`fixtureTypes`), piezas por nivel
+(`fixtures`) y, en cada canal, las que une su retorno (`wiredFixtureIds`). No
+tienen radio, así que aquí no se importan: los nodos y su cobertura son los
+mismos que sin ellas.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -78,7 +84,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 9)
+VERSIONES_CONOCIDAS = range(1, 10)
 
 
 class CoberturaError(Exception):
