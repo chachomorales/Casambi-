@@ -151,3 +151,13 @@ def test_los_sensores_locales_no_son_nodos():
     redes = cobertura.redes_del_proyecto(json.dumps(proyecto).encode())
     assert 4 not in [r["red"] for r in redes]
 
+
+
+def test_formato_8_trae_los_drivers_dali_del_salvador():
+    """El Salvador entra como nodo y su número de drivers viaja con él."""
+    proyecto = json.loads(_proyecto(version=8))
+    proyecto["levels"][0]["nodes"][0]["modelId"] = "SAL-2016"
+    proyecto["levels"][0]["nodes"][0]["daliDrivers"] = 10
+    planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
+    nodos = planos[0][1]["nodos"]
+    assert [n["drivers_dali"] for n in nodos] == [10, None, None]

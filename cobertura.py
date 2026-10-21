@@ -31,6 +31,12 @@ su zona de detección; los guarda como nodos con `"radio": false`. Aquí no
 existen: no se importan, no se cuentan en ninguna red y no se ofrecen para
 asociar a una unidad real.
 
+**Un Salvador puede decir cuántos drivers DALI lleva su bus** (formato 8, desde
+el 2026-10-20): `daliDrivers` en el nodo de un SAL-2016/2032/2064. En la red
+Casambi cada driver es una unidad y el Salvador ninguna. Aquí el Salvador se
+importa como un nodo más —está en el plano y repite la malla— y el número viaja
+en `drivers_dali` para el informe; None si no se indicó o no es un Salvador.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -66,12 +72,13 @@ EXTENSIONES = (".casambi", ".casambi.json")
 
 # Formatos que este importador sabe leer: 1 base, 2 con cuadro de cargas, 3 con
 # mediciones, 4 con varios niveles, 5 con redes Casambi por equipo, 6 con el
-# modo de radio de cada red y 7 con líneas dibujadas sobre el plano (`lines`,
-# que aquí no se usan: son dibujo, no equipo). El
+# modo de radio de cada red, 7 con líneas dibujadas sobre el plano (`lines`,
+# que aquí no se usan: son dibujo, no equipo) y 8 con los drivers DALI del bus
+# de un Salvador (`daliDrivers`). El
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 8)
+VERSIONES_CONOCIDAS = range(1, 9)
 
 
 class CoberturaError(Exception):
@@ -139,6 +146,13 @@ def _nombres_de_red(proyecto: dict) -> dict[str, str]:
 def _red_del_nodo(nodo: dict, red_del_nivel: int) -> int:
     """La red de un nodo: la suya, o la de su nivel si nadie se la asignó."""
     return _red(nodo.get("network")) or red_del_nivel
+
+
+def _drivers_dali(valor) -> int | None:
+    """Los drivers DALI declarados en el bus de un Salvador, o None."""
+    if isinstance(valor, bool) or not isinstance(valor, int) or valor < 0:
+        return None
+    return valor
 
 
 def _es_casambi(nodo) -> bool:
@@ -258,6 +272,8 @@ def _importa_nivel(nivel: dict, perdidas: dict, nombre: str | None,
             "nota":     nota,
             "ptx_dbm":  nodo.get("ptxDbm"),
             "fijo":     bool(nodo.get("locked")),
+            # Solo en un Salvador que lo declara: sus drivers son las unidades de la red.
+            "drivers_dali": _drivers_dali(nodo.get("daliDrivers")),
             # La suya, o la de su nivel si nadie se la asignó.
             "red":      _red_del_nodo(nodo, red_del_nivel),
             # Lo rellena el usuario desde la pestaña Planos.
