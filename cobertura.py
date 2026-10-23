@@ -47,6 +47,11 @@ mismos que sin ellas.
 calibre, metros extra y bajada a cada luminaria, para la caída de tensión, y
 cruzar de un nivel a otro. Nada de eso es radio: aquí tampoco se importa.
 
+**Formato 11** (desde el 2026-10-22): drivers en el plano —un tipo de luminaria
+con `"supply": true`, que se pone entre el nodo y sus tiras— y fuentes que dicen
+cuántas piezas, de qué modelo del catálogo y con qué señal se atenúan. Tampoco
+tienen radio: aquí no se importan.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -88,7 +93,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 11)
+VERSIONES_CONOCIDAS = range(1, 12)
 
 
 class CoberturaError(Exception):
