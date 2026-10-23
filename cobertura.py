@@ -52,6 +52,10 @@ con `"supply": true`, que se pone entre el nodo y sus tiras— y fuentes que dic
 cuántas piezas, de qué modelo del catálogo y con qué señal se atenúan. Tampoco
 tienen radio: aquí no se importan.
 
+**Formato 12** (desde el 2026-10-22): figuras sobre el plano —rectángulos,
+elipses, nubes de revisión y textos—, guardadas como líneas con `"shape"`. Son
+dibujo, como las líneas: aquí no se usan.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -93,7 +97,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 12)
+VERSIONES_CONOCIDAS = range(1, 13)
 
 
 class CoberturaError(Exception):
