@@ -56,6 +56,9 @@ tienen radio: aquí no se importan.
 elipses, nubes de revisión y textos—, guardadas como líneas con `"shape"`. Son
 dibujo, como las líneas: aquí no se usan.
 
+**Formato 13** (desde el 2026-10-22): anotaciones con flecha, otra figura
+(`"shape": "callout"`). Tampoco se usan.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -97,7 +100,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 13)
+VERSIONES_CONOCIDAS = range(1, 14)
 
 
 class CoberturaError(Exception):
