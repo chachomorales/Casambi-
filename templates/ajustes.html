@@ -61,7 +61,7 @@
   <div class="ajustes-actions">
     <button type="submit" class="btn btn-primary">Guardar cambios</button>
     <button type="submit" name="accion" value="borrar" class="btn btn-danger"
-            onclick="return confirm('¿Eliminar la cuenta «{{ c.label }}» del Llavero?\n\nSus redes dejarán de aparecer. Las anotaciones guardadas (escenas, botones, planos) no se borran.')">
+            data-confirmar="¿Eliminar la cuenta «{{ c.label }}» del Llavero?&#10;&#10;Sus redes dejarán de aparecer. Las anotaciones guardadas (escenas, botones, planos) no se borran.">
       Eliminar cuenta
     </button>
   </div>
@@ -99,4 +99,16 @@
   </div>
   <p class="hint">Al guardar se verifica la conexión con Casambi Cloud.</p>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+  // La CSP no ejecuta onclick: la confirmación se engancha aquí. Además,
+  // un nombre de cuenta con comilla ya no puede romper el JavaScript.
+  document.querySelectorAll('[data-confirmar]').forEach(btn => {
+    btn.addEventListener('click', ev => {
+      if (!confirm(btn.dataset.confirmar)) ev.preventDefault();
+    });
+  });
+</script>
 {% endblock %}

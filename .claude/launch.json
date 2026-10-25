@@ -2,6 +2,17 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "casambi-panel",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": [
+        "CASAMBI_MODE=desktop",
+        "CASAMBI_HOME=/Users/emorales/Developer/CASAMBI",
+        ".venv/bin/python", "-c",
+        "from app import app; app.run(host='127.0.0.1', port=5055, debug=False, use_reloader=False)"
+      ],
+      "port": 5055
+    },
+    {
       "name": "casambi-app",
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["desktop.py"]

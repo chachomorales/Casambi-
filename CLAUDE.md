@@ -315,6 +315,12 @@ no inventario, y mezclarlos con lo instalado haría leer una propuesta como un h
   una vez la plantilla nueva con el CSS viejo de su caché y salió la barra
   superior sin estilos, en forma de segundo logotipo. `error.html` no extiende
   `base.html`, así que lleva su propia llamada.
+- **La CSP no admite nada en línea.** Cada `<script>` embebido lleva
+  `nonce="{{ csp_nonce() }}"`; no hay `onclick` ni atributos `style`. Lo que la
+  plantilla quiere posicionar o colorear va en `data-x`/`data-y`/`data-fondo` y
+  lo aplica el JS por `.style`, que la CSP sí deja. Saltárselo no da error: el
+  navegador ignora el script o el estilo en silencio. `test_endurecimiento`
+  revisa las plantillas.
 - **`scrollIntoView` no se queda en su contenedor.** Ni con `block: 'nearest'`:
   arrastra también el desplazamiento del documento. Para mover la fila de
   pestañas se toca `scrollLeft` a mano; con `scrollIntoView` la página arrancaba

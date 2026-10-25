@@ -11,7 +11,7 @@
   </div>
   <p class="cargando-conteo" id="carga-conteo"></p>
 
-  <div class="flash flash-error" id="carga-error" style="display:none"></div>
+  <div class="flash flash-error" id="carga-error" hidden></div>
   <p class="hint" id="carga-hint">
     Los datos se piden a Casambi Cloud; en redes grandes puede tardar unos segundos.
   </p>
@@ -19,7 +19,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
   // La URL lleva el identificador de la tarea: antes el progreso era único para
   // todo el servidor, así que quien abría una red mientras otro cargaba veía la
   // barra —y el nombre— de la red ajena, y era redirigido cuando terminaba la de
@@ -43,7 +43,7 @@
 
     if (s.error) {
       errorEl.textContent = s.error;
-      errorEl.style.display = '';
+      errorEl.hidden = false;
       wrapEl.style.display = 'none';
       conteoEl.textContent = '';
       hintEl.innerHTML = '<a href="{{ url_for("ajustes") }}">Revisar las cuentas en Ajustes</a>';

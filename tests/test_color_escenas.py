@@ -86,7 +86,7 @@ def test_captura_guarda_el_color(capturar, perfil, cliente, datos_limpios):
     assert guardado == {"20": {"1": {"rgb": "#B700FF", "blanco": 50}}}
 
     html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
-    assert "background: #B700FF" in html
+    assert 'data-fondo="#B700FF"' in html
     assert "Blanco 50 %" in html
 
     ws = _hoja_escenas(cliente)

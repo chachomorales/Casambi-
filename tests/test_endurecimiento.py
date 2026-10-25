@@ -10,6 +10,8 @@ de Casambi viajaba en claro en el HTML de Ajustes.
 from __future__ import annotations
 
 import io
+import re
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -103,6 +105,38 @@ def test_csp_restrictiva(cliente):
     for directiva in ("default-src 'self'", "frame-ancestors 'none'",
                       "form-action 'self'", "base-uri 'self'"):
         assert directiva in csp
+    assert "unsafe-inline" not in csp
+
+
+@pytest.mark.parametrize("ruta", ["/", f"/network/{RED_ID}", "/ajustes"])
+def test_los_scripts_llevan_el_nonce_de_la_cabecera(cliente, ruta):
+    """Sin 'unsafe-inline', un <script> sin el nonce de esta respuesta no corre:
+    la página se quedaría muda sin ningún error visible en el servidor."""
+    r = cliente.get(ruta, follow_redirects=True)
+    csp = r.headers["Content-Security-Policy"]
+    nonce = re.search(r"'nonce-([^']+)'", csp).group(1)
+    html = r.get_data(as_text=True)
+    scripts = re.findall(r"<script\b[^>]*>", html)
+    assert all(f'nonce="{nonce}"' in s for s in scripts), scripts
+
+
+def test_el_nonce_cambia_en_cada_respuesta(cliente):
+    a = cliente.get("/").headers["Content-Security-Policy"]
+    b = cliente.get("/").headers["Content-Security-Policy"]
+    assert a != b
+
+
+def test_las_plantillas_no_traen_nada_en_linea_que_la_csp_bloquee():
+    """Un onclick o un style="" no dan error al renderizar: el navegador los
+    ignora en silencio. Mejor que reviente aquí."""
+    plantillas = Path(__file__).resolve().parent.parent / "templates"
+    for f in plantillas.glob("*.html"):
+        html = f.read_text(encoding="utf-8")
+        assert not re.search(r"\son[a-z]+\s*=", html), f"manejador en línea en {f.name}"
+        assert not re.search(r"\sstyle\s*=", html), f"atributo style en {f.name}"
+        assert "<style" not in html, f"bloque <style> en {f.name}"
+        for etiqueta in re.findall(r"<script\b[^>]*>", html):
+            assert "nonce=" in etiqueta or "src=" in etiqueta, f"{etiqueta} en {f.name}"
 
 
 def test_hsts_solo_en_modo_web(cliente, app_cargada, monkeypatch):

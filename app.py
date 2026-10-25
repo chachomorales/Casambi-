@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import uuid
@@ -104,6 +105,17 @@ def estatico(filename: str) -> str:
     except OSError:
         return url_for("static", filename=filename)
     return url_for("static", filename=filename, v=marca)
+
+
+# Un nonce por respuesta para los <script> embebidos: la CSP solo ejecuta los
+# que lo llevan, así que un script inyectado en un nombre de unidad o de escena
+# no corre aunque se colara en el HTML. Se crea al primer uso, no en un
+# before_request, porque las páginas de error pueden salir antes de que corra.
+@app.template_global("csp_nonce")
+def csp_nonce() -> str:
+    if "csp_nonce" not in g:
+        g.csp_nonce = secrets.token_urlsafe(16)
+    return g.csp_nonce
 
 
 @app.template_filter("hace")
@@ -1162,18 +1174,20 @@ def _cabeceras_de_seguridad(resp):
     """
     Cabeceras que no cuestan nada y cierran clases enteras de problema.
 
-    La CSP permite estilos y scripts en línea porque network.html los trae
-    embebidos; no hay ni un onclick, así que pasar a nonce más adelante es
-    trivial. HSTS solo en modo web: en el escritorio se sirve por http en
-    127.0.0.1 y forzaría al navegador a rechazar la propia app.
+    Sin 'unsafe-inline': los <script> embebidos llevan el nonce de
+    `csp_nonce()` y no hay manejadores en atributos (`onclick`) ni atributos
+    `style`; lo que antes iba en `style` va en `data-*` y lo aplica el JS, que
+    sí puede tocar `.style`. Al añadir un script o un estilo, respétalo o la
+    página se rompe en silencio. HSTS solo en modo web: en el escritorio se
+    sirve por http en 127.0.0.1 y forzaría al navegador a rechazar la propia app.
     """
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     resp.headers.setdefault("Content-Security-Policy", (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
+        f"script-src 'self' 'nonce-{csp_nonce()}'; "
+        "style-src 'self'; "
         "img-src 'self' data:; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "

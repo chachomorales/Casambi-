@@ -423,7 +423,7 @@
                   </td>
                   {% if s.hay_color %}
                   <td class="color-cell" data-scene="{{ s.id }}" data-unit="{{ d.id }}">
-                    {%- if d.color %}{% if d.color.rgb %}<span class="color-swatch" style="background: {{ d.color.rgb }}"></span>{{ d.color.rgb }}{% endif %}{% if d.color.blanco is not none %}<span class="color-blanco">Blanco {{ d.color.blanco }} %</span>{% endif %}{% else %}–{% endif -%}
+                    {%- if d.color %}{% if d.color.rgb %}<span class="color-swatch" data-fondo="{{ d.color.rgb }}"></span>{{ d.color.rgb }}{% endif %}{% if d.color.blanco is not none %}<span class="color-blanco">Blanco {{ d.color.blanco }} %</span>{% endif %}{% else %}–{% endif -%}
                   </td>
                   {% endif %}
                 </tr>
@@ -633,14 +633,14 @@
         {% for n in cob.nodos %}
         <div class="plano-nodo{% if n.gateway %} pn-gateway{% endif %}{% if n.unit_id %} pn-asociado{% endif %}"
              data-nodo="{{ n.id }}"
-             style="left: {{ (n.x * 100)|round(3) }}%; top: {{ (n.y * 100)|round(3) }}%"
+             data-x="{{ (n.x * 100)|round(3) }}" data-y="{{ (n.y * 100)|round(3) }}"
              title="{{ n.label }}{% if n.gateway %} · gateway{% endif %}{% if n.nota %} — {{ n.nota }}{% endif %}">{{ n.label }}</div>
         {% endfor %}
         {% else %}
         {% for uid, pos in p.markers.items() %}
         <div class="plano-marker pm-{{ elementos_map.get(uid, {}).get('cat', '') }}"
              data-unit="{{ uid }}"
-             style="left: {{ (pos.x * 100)|round(3) }}%; top: {{ (pos.y * 100)|round(3) }}%"
+             data-x="{{ (pos.x * 100)|round(3) }}" data-y="{{ (pos.y * 100)|round(3) }}"
              title="{{ elementos_map.get(uid, {}).get('name', 'ID ' + uid) }}">{{ uid }}</div>
         {% endfor %}
         {% endif %}
@@ -691,9 +691,19 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
   // Token CSRF para todas las llamadas fetch de esta página.
   const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+  // La CSP no admite atributos style: las posiciones y los colores que pone la
+  // plantilla llegan en data-* y se aplican aquí, por el CSSOM, que sí se permite.
+  document.querySelectorAll('[data-x][data-y]').forEach(el => {
+    el.style.left = el.dataset.x + '%';
+    el.style.top  = el.dataset.y + '%';
+  });
+  document.querySelectorAll('[data-fondo]').forEach(el => {
+    el.style.background = el.dataset.fondo;
+  });
 
   // Un .casambi con varias redes Casambi: se lee aquí mismo para ofrecer cuál
   // importar, con la misma regla que cobertura.py — la red propia del nodo, o
