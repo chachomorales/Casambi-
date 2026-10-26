@@ -179,3 +179,10 @@ def test_formato_10_se_abre_igual():
     proyecto = json.loads(_proyecto(version=10))
     planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
     assert len(planos[0][1]["nodos"]) == 3
+
+
+def test_formato_14_se_abre_igual():
+    """Las luminarias DMX son del cuadro de cargas, no de la radio."""
+    proyecto = json.loads(_proyecto(version=14))
+    planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
+    assert len(planos[0][1]["nodos"]) == 3

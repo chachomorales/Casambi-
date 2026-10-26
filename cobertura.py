@@ -59,6 +59,10 @@ dibujo, como las líneas: aquí no se usan.
 **Formato 13** (desde el 2026-10-22): anotaciones con flecha, otra figura
 (`"shape": "callout"`). Tampoco se usan.
 
+**Formato 14** (desde el 2026-10-26): luminarias y drivers con control DMX
+(`"control": "dmx"` en un tipo o en la fuente de un canal). Son carga, no radio:
+aquí no se importan.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -100,7 +104,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 14)
+VERSIONES_CONOCIDAS = range(1, 15)
 
 
 class CoberturaError(Exception):
