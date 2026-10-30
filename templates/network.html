@@ -150,6 +150,67 @@
     {%- endif %}
   </div>
 
+  {% macro franja(d) %}
+  <div class="hist-dia">
+    <span class="hist-fecha">{{ d.etiqueta }}</span>
+    <div class="hist-barra">
+      {%- for t in d.tramos %}
+      <span class="hist-tramo hist-{{ t.clase }}" data-izq="{{ t.izq }}" data-ancho="{{ t.ancho }}" title="{{ t.titulo }}"></span>
+      {%- endfor %}
+    </div>
+  </div>
+  {% endmacro %}
+
+  <div class="historial">
+    <h3 class="historial-titulo">Historial de conexión</h3>
+    {% if historial.estado != 'ok' %}
+    <p class="hint">{{ texto_sin_historial[historial.estado] }}</p>
+    {% else %}
+    <div class="diag-chips">
+      <span class="diag-chip diag-chip-{{ 'fallo' if historial.cortes_red else 'ok' }}"><b>{{ historial.cortes_red }}</b> cortes de toda la red</span>
+      <span class="diag-chip diag-chip-{{ 'aviso' if historial.cortes_parciales else 'ok' }}"><b>{{ historial.cortes_parciales }}</b> cortes parciales</span>
+      <span class="diag-chip diag-chip-neutro"><b>{{ historial.sin_conexion }}</b> sin conexión</span>
+    </div>
+
+    {% for d in historial.dias[:7] %}{{ franja(d) }}{% endfor %}
+    {% if historial.dias|length > 7 %}
+    <details class="hist-mas">
+      <summary>Ver {{ historial.dias|length - 7 }} días anteriores</summary>
+      {% for d in historial.dias[7:] %}{{ franja(d) }}{% endfor %}
+    </details>
+    {% endif %}
+    <div class="hist-eje"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+    <div class="hist-leyenda">
+      <span><i class="hist-muestra hist-online"></i>En línea</span>
+      <span><i class="hist-muestra hist-red"></i>Toda la red</span>
+      <span><i class="hist-muestra hist-parcial"></i>Parcial</span>
+      <span><i class="hist-muestra hist-nodata"></i>Sin datos</span>
+    </div>
+
+    {% if historial.cortes %}
+    <div class="table-wrap">
+      <table class="tabla-historial">
+        <thead><tr><th>Inicio</th><th>Duración</th><th>Afectadas</th><th>Lectura</th></tr></thead>
+        <tbody>
+          {% for c in historial.cortes[:50] %}
+          <tr title="{{ c.unidades|join(', ') }}">
+            <td data-label="Inicio">{{ c.inicio.strftime('%d/%m %H:%M:%S') }}</td>
+            <td data-label="Duración">{% if c.en_curso %}Sigue · {% endif %}{{ c.duracion }}</td>
+            <td data-label="Afectadas">{{ c.afectadas }} de {{ c.total }}</td>
+            <td data-label="Lectura">{{ c.lectura }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if historial.cortes|length > 50 %}<p class="hint">Se muestran los 50 más recientes de {{ historial.cortes|length }}; el Excel los trae todos.</p>{% endif %}
+    {% else %}
+    <p class="hint">Ningún corte registrado.</p>
+    {% endif %}
+    <p class="hint">Registro desde el {{ historial.desde.strftime('%d/%m/%Y %H:%M') }}. La nube guarda 60 días, y un gateway sin internet puede no dejar rastro de un corte.{% if historial.truncado %} Hay más registros de los que caben: faltan algunos.{% endif %}</p>
+    {% endif %}
+  </div>
+
   <input type="search" class="table-search" placeholder="Buscar en conectividad…" data-target="tbl-conectividad">
   <div class="table-wrap">
     <table id="tbl-conectividad">
@@ -700,6 +761,10 @@
   document.querySelectorAll('[data-x][data-y]').forEach(el => {
     el.style.left = el.dataset.x + '%';
     el.style.top  = el.dataset.y + '%';
+  });
+  document.querySelectorAll('[data-izq]').forEach(el => {
+    el.style.left  = el.dataset.izq + '%';
+    el.style.width = el.dataset.ancho + '%';
   });
   document.querySelectorAll('[data-fondo]').forEach(el => {
     el.style.background = el.dataset.fondo;

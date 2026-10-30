@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 279 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 301 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 242:
+# propósito para que PyInstaller no las meta en el .app. Los otros 265:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 279 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 301 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -344,6 +344,29 @@ offline», y hay dos razones medidas sobre las redes reales:
 `condition` es el otro dato aprovechable: la API no lo documenta, valía 0 en 1.544 de
 1.550 unidades y 128 en seis luminarias por lo demás sanas (`status: "ok"`, online).
 Se muestra como aviso sin traducirlo a una causa, porque no sabemos cuál es.
+
+**El historial de cortes sale del data logging, no del estado.**
+`CasambiClient.get_datapoints(red, keys="online")` pide
+`/datapoints/networks/{id}/datapoints`, 60 días en una petición (si no cabe, por
+semanas: la nube entrega del más viejo al más nuevo y el límite se comería lo
+reciente). Exige gateway con «Usage of devices». `report.historial_conexion()` lo
+convierte en cortes para la pestaña y la hoja Conectividad. Lo que se vio en las
+redes reales y hay que respetar:
+
+- **Todo log arranca con un `online 0`** que dura unos 20 s en todas las unidades.
+  Es el gateway descubriendo la malla, no un corte: no se cuenta nada hasta el
+  primer `online 1` de cada unidad.
+- **El `dimmer` del log engaña.** Al caer una unidad se anota `dimmer 0` aunque
+  nadie lo tocara. Para calcular uso hay que descartar los que coinciden con una
+  caída. `on` tampoco vale: sigue en `true` con el dim a 0.
+- **«Toda la red» se lee «Gateway o energía», nunca solo gateway:** desde la nube
+  un corte de luz y una pasarela caída son iguales.
+- **Las horas pierden ceros** (`…26.47+00:00`), y `fromisoformat` de Python 3.9 no
+  las acepta: de ahí `_hora_datapoint()`.
+
+`battery_level` también va en datapoints (`sensors`, con «Sensor data» activo), no
+en `/state`. El 2026-10-30 se activó en MC Quiché y Ostuncalco para los PSC-ZKV-TMC
+y aún no había llegado nada.
 
 **La temperatura no está en `controls`.** El estado de cada unidad trae aparte una
 lista `sensors` (`[{"name": "Temperature", "value": 35.0, "timestamp": …}]`) que hoy

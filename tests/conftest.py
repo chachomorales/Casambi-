@@ -140,6 +140,9 @@ class _ClienteFalso:
     def get_fixtures_for_units(self, units, progress=None):
         return dict(FIXTURES)
 
+    def get_datapoints(self, network_id, keys, dias=60, hasta=None):
+        return {"puntos": [], "truncado": False}
+
     def get_image(self, network_id, image_id):
         return PNG_MINIMO
 
@@ -227,6 +230,7 @@ def app_cargada(credenciales, datos_limpios):
             "network": NETWORK,
             "state": STATE,
             "fixtures": FIXTURES,
+            "registro_conexion": {"puntos": [], "truncado": False},
             "fetched_at": datetime(2026, 9, 18, 12, 0, 0),
         }},
         "error": None,

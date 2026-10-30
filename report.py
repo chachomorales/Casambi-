@@ -10,7 +10,7 @@ import io
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -804,7 +804,279 @@ def _sheet_red(wb: Workbook, network: dict, state: dict) -> None:
     ws.column_dimensions["B"].width = 35
 
 
-def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
+# ── Historial de conexión ─────────────────────────────────────────────────────
+TEXTO_SIN_HISTORIAL = {
+    "vacio": "Esta red no tiene historial en la nube: hace falta un gateway "
+             "conectado con «Usage of devices» activado.",
+    "error": "No se pudo leer el historial de conexión de la nube.",
+}
+
+# Sale del data logging de la nube (clave `online`), que guarda 60 días y exige
+# un gateway con «Usage of devices» activado.
+
+# Las caídas de una misma causa llegan con segundos de diferencia entre unidades.
+VENTANA_CORTE_S = 60
+# Desde esta proporción de unidades se lee como un corte de la red entera.
+PROPORCION_RED = 0.8
+
+_ALCANCE_LECTURA = {
+    "red": "Gateway o energía",
+    "parcial": "Varias unidades",
+    "unidad": "Esa unidad",
+}
+_DIAS_SEMANA = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+_MESES = ("ene", "feb", "mar", "abr", "may", "jun",
+          "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _hora_datapoint(texto) -> datetime | None:
+    """Hora local de un datapoint, o None si no se entiende.
+
+    A mano y no con fromisoformat: la nube recorta los ceros de los milisegundos
+    (`…26.47+00:00`) y Python 3.9, el del `.app`, solo acepta 3 o 6 decimales.
+    """
+    for formato in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            momento = datetime.strptime(str(texto), formato)
+        except ValueError:
+            continue
+        return momento.astimezone(config.zona_horaria()).replace(tzinfo=None)
+    return None
+
+
+def _duracion(segundos: float) -> str:
+    """«49 s», «1 min 56 s», «2 h 5 min», «3 d 4 h»."""
+    s = int(round(segundos))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min {s % 60} s" if s % 60 else f"{s // 60} min"
+    if s < 86400:
+        return f"{s // 3600} h {(s % 3600) // 60} min"
+    return f"{s // 86400} d {(s % 86400) // 3600} h"
+
+
+def _caidas_por_unidad(puntos: list, ids: set) -> list[dict]:
+    """Tramos sin conexión de cada unidad, a partir de sus cambios de `online`."""
+    por_unidad: dict[str, list] = {}
+    for p in puntos:
+        unidad = str(p.get("unit"))
+        momento = _hora_datapoint(p.get("time"))
+        if p.get("key") != "online" or unidad not in ids or momento is None:
+            continue
+        try:
+            en_linea = float(p.get("value")) > 0
+        except (TypeError, ValueError):
+            continue
+        por_unidad.setdefault(unidad, []).append((momento, en_linea))
+
+    caidas = []
+    for unidad, cambios in por_unidad.items():
+        cambios.sort(key=lambda c: c[0])
+        # Hasta el primer `online` no hay nada que contar: todo log arranca con un
+        # 0 que dura unos 20 s en todas las unidades, y no es un corte sino el
+        # gateway descubriendo la malla. Antes de eso, el estado es desconocido.
+        arrancando, inicio = True, None
+        for momento, en_linea in cambios:
+            if en_linea:
+                if inicio is not None:
+                    caidas.append({"unidad": unidad, "inicio": inicio, "fin": momento})
+                arrancando, inicio = False, None
+            elif not arrancando and inicio is None:
+                inicio = momento
+        if inicio is not None:
+            caidas.append({"unidad": unidad, "inicio": inicio, "fin": None})
+    return caidas
+
+
+def _franja_de_dia(dia: date, cortes: list, primero: datetime,
+                   ahora: datetime) -> dict:
+    """Una barra de 24 h: posiciones en % para pintarla en la interfaz."""
+    cero = datetime(dia.year, dia.month, dia.day)
+    fin_dia = cero + timedelta(days=1)
+
+    def _tramo(ini: datetime, fin: datetime, clase: str) -> dict:
+        return {
+            "izq": round((ini - cero).total_seconds() / 864, 3),
+            "ancho": round((fin - ini).total_seconds() / 864, 3),
+            "clase": clase,
+            "titulo": f"{ini:%H:%M:%S} – {fin:%H:%M:%S}",
+        }
+
+    tramos = []
+    if primero > cero:
+        tramos.append(_tramo(cero, min(primero, fin_dia), "nodata"))
+    if ahora < fin_dia:
+        tramos.append(_tramo(max(ahora, cero), fin_dia, "nodata"))
+    for c in cortes:
+        ini = max(c["inicio"], cero)
+        fin = min(c["fin"] or (ahora if c["en_curso"] else c["inicio"]), fin_dia)
+        if ini < fin_dia and fin >= ini and c["inicio"] < fin_dia:
+            tramos.append(_tramo(ini, fin, c["alcance"]))
+    return {
+        "fecha": dia,
+        "etiqueta": f"{_DIAS_SEMANA[dia.weekday()]} {dia.day} {_MESES[dia.month - 1]}",
+        "tramos": tramos,
+    }
+
+
+def historial_conexion(network: dict, state: dict, registro: dict | None,
+                       ahora: datetime | None = None) -> dict:
+    """
+    Cortes de conexión de la red a partir del data logging.
+
+    `registro` es lo que devuelve CasambiClient.get_datapoints(), o None si no
+    se pudo leer. Las caídas de varias unidades casi a la vez se agrupan en un
+    solo corte, y su alcance es lo que orienta la causa: si cae casi toda la red
+    el equipo no es el culpable, igual que en diagnostico_conectividad(). Los
+    pulsadores a pila no cuentan, porque dormir es lo suyo.
+    """
+    ahora = ahora or config.ahora()
+    if registro is None:
+        return {"estado": "error"}
+
+    unidades = {
+        str(u.get("id")): u for u in network.get("units", [])
+        if (u.get("type") or "").lower() not in _TIPOS_EN_REPOSO
+    }
+    momentos = [
+        m for m in (_hora_datapoint(p.get("time")) for p in registro.get("puntos") or [])
+        if m is not None
+    ]
+    if not momentos:
+        return {"estado": "vacio"}
+    primero = min(momentos)
+
+    en_linea = {
+        str(u.get("id")): bool(u.get("online")) for u in state.get("units", [])
+    }
+
+    # Agrupar por inicio: cada corte reúne lo que cayó en su primera ventana
+    grupos: list[list] = []
+    caidas = _caidas_por_unidad(registro.get("puntos") or [], set(unidades))
+    for caida in sorted(caidas, key=lambda c: c["inicio"]):
+        if grupos and (caida["inicio"] - grupos[-1][0]["inicio"]).total_seconds() <= VENTANA_CORTE_S:
+            grupos[-1].append(caida)
+        else:
+            grupos.append([caida])
+
+    total = len(unidades)
+    cortes = []
+    for grupo in grupos:
+        afectadas = {c["unidad"] for c in grupo}
+        if len(afectadas) == 1:
+            alcance = "unidad"
+        elif len(afectadas) / total >= PROPORCION_RED:
+            alcance = "red"
+        else:
+            alcance = "parcial"
+
+        # Sin registro de vuelta: si sigue caída es un corte en curso; si ya
+        # responde, volvió sin que el log lo anotara y la duración no se conoce.
+        abiertas = [c for c in grupo if c["fin"] is None]
+        en_curso = any(not en_linea.get(c["unidad"], False) for c in abiertas)
+        fin = None if abiertas else max(c["fin"] for c in grupo)
+        inicio = grupo[0]["inicio"]
+        segundos = None
+        if fin is not None:
+            segundos = (fin - inicio).total_seconds()
+        elif en_curso:
+            segundos = (ahora - inicio).total_seconds()
+
+        cortes.append({
+            "inicio": inicio,
+            "fin": fin,
+            "en_curso": en_curso,
+            "segundos": segundos,
+            "duracion": _duracion(segundos) if segundos is not None else "Sin registro",
+            "afectadas": len(afectadas),
+            "total": total,
+            "alcance": alcance,
+            "lectura": _ALCANCE_LECTURA[alcance],
+            "unidades": sorted(
+                (unidades[u].get("name") or f"ID {u}" for u in afectadas),
+                key=str.lower,
+            ),
+        })
+
+    # Dos cortes solapados no se suman dos veces: se recorren en orden.
+    sin_conexion, hasta = 0.0, None
+    for c in cortes:
+        if c["segundos"] is None:
+            continue
+        fin = c["inicio"] + timedelta(seconds=c["segundos"])
+        ini = max(c["inicio"], hasta) if hasta else c["inicio"]
+        if fin > ini:
+            sin_conexion += (fin - ini).total_seconds()
+            hasta = fin
+
+    dias = []
+    dia = ahora.date()
+    while dia >= primero.date():
+        dias.append(_franja_de_dia(dia, cortes, primero, ahora))
+        dia -= timedelta(days=1)
+
+    return {
+        "estado": "ok",
+        "desde": primero,
+        "truncado": bool(registro.get("truncado")),
+        "cortes_red": sum(1 for c in cortes if c["alcance"] == "red"),
+        "cortes_parciales": sum(1 for c in cortes if c["alcance"] != "red"),
+        "sin_conexion": _duracion(sin_conexion),
+        "cortes": cortes[::-1],
+        "dias": dias,
+    }
+
+
+def _tabla_historial(ws, fila: int, historial: dict) -> None:
+    """Los cortes bajo la lista de dispositivos de la hoja Conectividad."""
+    ws.merge_cells(f"A{fila}:K{fila}")
+    sec = ws.cell(row=fila, column=1, value="HISTORIAL DE CONEXIÓN")
+    sec.font = Font(bold=True, size=11, color=COLOR_COVER_DARK, name="Calibri")
+    sec.fill = _section_fill()
+    sec.alignment = Alignment(horizontal="left", vertical="center")
+    for col in range(1, 12):
+        ws.cell(row=fila, column=col).border = BORDER
+    ws.row_dimensions[fila].height = 20
+
+    def _nota(row: int, texto: str) -> None:
+        ws.merge_cells(f"A{row}:K{row}")
+        celda = ws.cell(row=row, column=1, value=texto)
+        celda.font = Font(size=9, italic=True, color=COLOR_TXT_REPOSO, name="Calibri")
+        celda.alignment = Alignment(vertical="center")
+
+    if historial["estado"] != "ok":
+        _nota(fila + 1, TEXTO_SIN_HISTORIAL[historial["estado"]])
+        return
+
+    _nota(fila + 1,
+          f"Registro desde {historial['desde']:%d/%m/%Y %H:%M}. "
+          f"{historial['cortes_red']} cortes de toda la red, "
+          f"{historial['cortes_parciales']} parciales, "
+          f"{historial['sin_conexion']} sin conexión.")
+    if not historial["cortes"]:
+        _nota(fila + 2, "Ningún corte registrado.")
+        return
+
+    hdr = fila + 2
+    _write_header_row(ws, hdr, ["Nº", "Inicio", "Fin", "Duración", "Afectadas",
+                                "Lectura", "Unidades"])
+    ws.row_dimensions[hdr].height = 24
+    for i, c in enumerate(historial["cortes"]):
+        row = hdr + 1 + i
+        fin = (f"{c['fin']:%d/%m/%Y %H:%M:%S}" if c["fin"]
+               else "Sigue sin conexión" if c["en_curso"] else "Sin registro")
+        _write_data_row(ws, row, [
+            i + 1, f"{c['inicio']:%d/%m/%Y %H:%M:%S}", fin, c["duracion"],
+            f"{c['afectadas']} de {c['total']}", c["lectura"],
+            "Todas" if c["afectadas"] == c["total"] else ", ".join(c["unidades"]),
+        ], alternate=(row % 2 == 0))
+        ws.merge_cells(f"G{row}:K{row}")
+        ws.row_dimensions[row].height = 18
+
+
+def _sheet_conectividad(wb: Workbook, network: dict, state: dict,
+                        historial: dict | None = None) -> None:
     """
     Quién responde y quién no, para reportar problemas de red.
 
@@ -950,6 +1222,9 @@ def _sheet_conectividad(wb: Workbook, network: dict, state: dict) -> None:
         _freeze(ws, f"A{hdr + 1}")
     else:
         ws.cell(row=hdr + 1, column=1, value="La red no tiene dispositivos dados de alta.")
+
+    if historial is not None:
+        _tabla_historial(ws, hdr + len(diag["dispositivos"]) + 3, historial)
 
 
 def _sheet_elementos(wb: Workbook, network: dict, state: dict, fixtures: dict) -> None:
@@ -1991,6 +2266,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
                     images_dir: Path | None = None,
                     manual_planos: list | None = None,
                     leido_en: datetime | None = None,
+                    historial: dict | None = None,
                     output_dir: str = ".") -> Path:
     """
     Build the Excel report from raw API data and save it.
@@ -2006,6 +2282,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
         manualmente; "cobertura" solo lo traen los importados del simulador.
     leido_en: hora de la descarga de la red, la de la presencia y luz de los sensores
         y de las luminarias que los llevan integrados.
+    historial: resultado de historial_conexion(), para la hoja Conectividad.
     Returns the Path of the generated file.
     """
     if fixtures is None:
@@ -2015,7 +2292,7 @@ def generate_report(network: dict, state: dict, fixtures: dict | None = None,
 
     _sheet_portada(wb, network, state)
     _sheet_red(wb, network, state)
-    _sheet_conectividad(wb, network, state)
+    _sheet_conectividad(wb, network, state, historial=historial)
     _sheet_elementos(wb, network, state, fixtures)
     _sheet_luminarias(wb, network, state, fixtures, leido_en=leido_en)
     _sheet_pulsadores(wb, network, state, button_config=button_config)

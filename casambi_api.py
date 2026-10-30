@@ -4,10 +4,16 @@ Docs: https://developer.casambi.com/
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import requests
 
 BASE_URL = "https://door.casambi.com"
+
+# La nube conserva 60 días de datapoints; el formato de `from`/`to` es UTC.
+DIAS_DATAPOINTS = 60
+LIMITE_DATAPOINTS = 20000
+_FORMATO_DATAPOINTS = "%Y%m%d%H%M"
 WS_URL = "wss://door.casambi.com/v1/bridge/"
 
 
@@ -43,10 +49,10 @@ class CasambiClient:
             h["X-Casambi-Session"] = session
         return h
 
-    def _get(self, path: str, network_id: str = None) -> dict:
+    def _get(self, path: str, network_id: str = None, params: dict = None) -> dict:
         url = f"{BASE_URL}{path}"
         headers = self._headers_for(network_id) if network_id else self._headers
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
         if not resp.ok:
             raise CasambiAPIError(f"GET {path} → {resp.status_code}: {resp.text}")
         return resp.json()
@@ -120,6 +126,43 @@ class CasambiClient:
         """Live state of all units and groups — normalized to lists."""
         data = self._get(f"/v1/networks/{network_id}/state", network_id=str(network_id))
         return self._normalize_network(data)
+
+    def get_datapoints(self, network_id, keys: str, dias: int = DIAS_DATAPOINTS,
+                       hasta: datetime = None) -> dict:
+        """
+        Registros del data logging de la red: {"puntos": [...], "truncado": bool}.
+
+        La nube los guarda 60 días y los devuelve del más viejo al más nuevo, así
+        que con un límite alcanzado se perderían justo los recientes. Por eso, si
+        no caben de una vez, se piden por semanas. Las horas van siempre en UTC.
+        """
+        hasta = hasta or datetime.now(timezone.utc)
+        desde = hasta - timedelta(days=dias)
+
+        def _pide(inicio: datetime, fin: datetime) -> dict:
+            return self._get(
+                f"/datapoints/networks/{network_id}/datapoints",
+                network_id=str(network_id),
+                params={
+                    "keys": keys,
+                    "from": inicio.strftime(_FORMATO_DATAPOINTS),
+                    "to": fin.strftime(_FORMATO_DATAPOINTS),
+                    "limit": LIMITE_DATAPOINTS,
+                },
+            )
+
+        todo = _pide(desde, hasta)
+        if not todo.get("hasMoreResults"):
+            return {"puntos": todo.get("dataPoints") or [], "truncado": False}
+
+        puntos, truncado, inicio = [], False, desde
+        while inicio < hasta:
+            fin = min(inicio + timedelta(days=7), hasta)
+            tramo = _pide(inicio, fin)
+            puntos.extend(tramo.get("dataPoints") or [])
+            truncado = truncado or bool(tramo.get("hasMoreResults"))
+            inicio = fin
+        return {"puntos": puntos, "truncado": truncado}
 
     def get_image(self, network_id, image_id: str) -> bytes:
         """

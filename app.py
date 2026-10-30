@@ -56,6 +56,8 @@ from report import (
     celdas_lectura,
     columnas_lectura,
     diagnostico_conectividad,
+    historial_conexion,
+    TEXTO_SIN_HISTORIAL,
     lectura_sensor,
     medida_electrica,
     temperatura_unidad,
@@ -409,17 +411,25 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
     meta = _find_network_meta(network_id) or {}
 
     if progress:
-        progress("Descargando la configuración de la red…", 0, 3)
+        progress("Descargando la configuración de la red…", 0, 4)
     network = client.get_network(network_id)
     network["site_name"] = meta.get("site_name", "")
 
     if progress:
-        progress("Leyendo el estado de los dispositivos…", 1, 3)
+        progress("Leyendo el estado de los dispositivos…", 1, 4)
     state = client.get_network_state(network_id)
+
+    # El historial es un añadido: sin él la red se sigue viendo entera.
+    if progress:
+        progress("Leyendo el historial de conexión…", 2, 4)
+    try:
+        registro = client.get_datapoints(network_id, keys="online")
+    except Exception:
+        registro = None
 
     units = network.get("units", [])
     if progress:
-        progress("Obteniendo los modelos de los dispositivos…", 2, 3)
+        progress("Obteniendo los modelos de los dispositivos…", 3, 4)
 
     def fixture_progress(done: int, total: int) -> None:
         if progress:
@@ -434,6 +444,7 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
         "network": network,
         "state": state,
         "fixtures": fixtures,
+        "registro_conexion": registro,
         "fetched_at": config.ahora(),
     }
     with _state_lock:
@@ -1047,6 +1058,9 @@ def _build_report_context(network_id: str, data: dict) -> dict:
         "nota_sin_lectura": NOTA_SIN_LECTURA,
         "catalogo_botones": catalogo_botones,
         "conexion": diagnostico_conectividad(network, data["state"]),
+        "historial": historial_conexion(network, data["state"],
+                                        data.get("registro_conexion")),
+        "texto_sin_historial": TEXTO_SIN_HISTORIAL,
         "summary": {
             "total": len(units),
             "luminarias": type_counts.get("Luminaria", 0),
@@ -1448,6 +1462,8 @@ def network_excel(network_id):
         images_dir=images_dir,
         manual_planos=manual_planos,
         leido_en=data.get("fetched_at"),
+        historial=historial_conexion(data["network"], data["state"],
+                                     data.get("registro_conexion")),
         output_dir=str(REPORTS_DIR),
     )
     return send_file(filepath.resolve(), as_attachment=True, download_name=filepath.name)
