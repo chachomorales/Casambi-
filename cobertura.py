@@ -67,6 +67,10 @@ aquí no se importan.
 el canal: de qué luminaria, o del nodo, sale cada rama). Es dibujo del cuadro
 de cargas: aquí no se usa.
 
+**Formato 16** (desde el 2026-11-05): fuentes que se alimentan a otro voltaje
+que la instalación (`inputV` en un tipo de driver o en la fuente de un canal).
+Es del cuadro de cargas: aquí no se usa.
+
 Cada red del simulador corresponde a una red de la nube distinta, así que un
 proyecto con varias se importa **una red a la vez**: `parse_proyecto(..., red=N)`
 deja solo los nodos de la red N y salta los niveles que no tienen ninguno. El
@@ -108,7 +112,7 @@ EXTENSIONES = (".casambi", ".casambi.json")
 # simulador sube la versión justo cuando un lector anterior leería mal el
 # archivo —la 4 vació los campos de la raíz—, así que una versión desconocida se
 # rechaza en vez de adivinarla.
-VERSIONES_CONOCIDAS = range(1, 16)
+VERSIONES_CONOCIDAS = range(1, 17)
 
 
 class CoberturaError(Exception):

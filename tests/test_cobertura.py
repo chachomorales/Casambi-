@@ -193,3 +193,10 @@ def test_formato_15_se_abre_igual():
     proyecto = json.loads(_proyecto(version=15))
     planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
     assert len(planos[0][1]["nodos"]) == 3
+
+
+def test_formato_16_se_abre_igual():
+    """La alimentación de una fuente es del cuadro de cargas, no de la radio."""
+    proyecto = json.loads(_proyecto(version=16))
+    planos, _ = cobertura.parse_proyecto(json.dumps(proyecto).encode())
+    assert len(planos[0][1]["nodos"]) == 3
