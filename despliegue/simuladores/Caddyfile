@@ -13,11 +13,13 @@
 	root * /srv
 	encode zstd gzip
 
-	# Lo que dice qué versión cargar no se guarda en caché: así una
-	# publicación llega en la siguiente apertura. El resto lo cachea el
-	# service worker de la app.
-	@siempreNuevo path / /index.html /sw.js /manifest.webmanifest /version.txt /incendios/ /incendios/index.html
-	header @siempreNuevo Cache-Control "no-cache"
+	# Nada se guarda en caché fuera de la app: ni el navegador sin preguntar
+	# ni Cloudflare, que por su cuenta guardaba los .js y .css 4 horas en su
+	# borde. Así salió una publicación con la página y el motor nuevos y el
+	# editor.js viejo: los botones nuevos no hacían nada. Para trabajar sin
+	# conexión ya está el service worker, que guarda cada versión entera; con
+	# «no-cache» el navegador solo pregunta si cambió (ETag), que es barato.
+	header Cache-Control "no-cache"
 
 	header {
 		X-Content-Type-Options "nosniff"
