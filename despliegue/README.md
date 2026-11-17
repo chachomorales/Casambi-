@@ -295,6 +295,54 @@ docker run --rm -v casambi-restaurado:/data -e CASAMBI_HOME=/data \
 Si eso imprime las cuentas, la copia sirve. Si no, la copia no existe, diga lo
 que diga el log del cron.
 
+## Simuladores (web)
+
+Los simuladores de preventa —hoy Incendios; luego CCTV, WiFi y Casambi
+Coverage— tienen su versión web en el repositorio `casambi-wifi-coverage`
+(carpeta `web/`). Aquí solo se sirven: son archivos estáticos (HTML, el motor
+en WebAssembly, pdf.js) en `/opt/simuladores/www`, servidos por el contenedor
+`simuladores` (Caddy) y publicados por el mismo túnel, en su propio
+subdominio y detrás del mismo Access.
+
+```
+Internet ─▶ Cloudflare Access ─▶ túnel ─▶ cloudflared ─┬─▶ casambi:8000
+                                                       └─▶ simuladores:80  (/opt/simuladores/www)
+```
+
+**Una sola vez, en Cloudflare Zero Trust:**
+
+1. **Networks → Tunnels →** el túnel de CASAMBI **→ Public Hostname → Add**:
+   `simuladores.casambigt.com` → servicio `HTTP`, `simuladores:80`.
+2. **Access → Applications →** la aplicación de CASAMBI **→ Edit →** añadir
+   `simuladores.casambigt.com` como segundo dominio (o crear una aplicación
+   *Self-hosted* nueva con la misma política). Sin esto el subdominio quedaría
+   abierto: Caddy no deja pasar nada sin la cabecera de Access, pero la puerta
+   de verdad es Access.
+
+**Publicar una versión**, desde la Mac (compila el motor allí, porque el
+servidor no tiene Swift, y sube los archivos):
+
+```sh
+cd ~/Developer/casambi-wifi-coverage
+SIMULADORES_HOST=root@<ip> web/tools/publicar.sh
+```
+
+No hace falta reiniciar nada: Caddy lee los archivos al vuelo. El commit
+publicado queda en `/opt/simuladores/www/version.txt`. Los usuarios reciben la
+versión nueva la siguiente vez que abren la app (el service worker la baja y
+la usa en la apertura siguiente).
+
+**Comprobar**, desde el servidor:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/                     # 403
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Cf-Access-Jwt-Assertion: x' \
+     http://127.0.0.1:8001/CoreWasm.wasm                                              # 200
+```
+
+El 403 sin la cabecera es la prueba de que quien llegue al origen sin pasar
+por Access no entra.
+
 ## Operación diaria
 
 | Tarea | Orden |

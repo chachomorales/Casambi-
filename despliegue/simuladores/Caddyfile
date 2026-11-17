@@ -1,0 +1,29 @@
+# Los simuladores web (repositorio casambi-wifi-coverage, carpeta web/www):
+# archivos estáticos en /srv, que sube web/tools/publicar.sh de ese repositorio.
+#
+# Como CASAMBI, solo se llega por el túnel de Cloudflare, detrás de Access. No
+# validamos el JWT aquí (Caddy no lo hace sin un plugin), pero sí exigimos su
+# cabecera: una petición que no pasó por Access no la trae, y se queda en 403.
+# Es la misma prueba que el «curl → 403» del README.
+
+:80 {
+	@sinAccess not header Cf-Access-Jwt-Assertion *
+	respond @sinAccess "Acceso solo por Cloudflare Access" 403
+
+	root * /srv
+	encode zstd gzip
+
+	# Lo que dice qué versión cargar no se guarda en caché: así una
+	# publicación llega en la siguiente apertura. El resto lo cachea el
+	# service worker de la app.
+	@siempreNuevo path / /index.html /sw.js /manifest.webmanifest /version.txt /incendios/ /incendios/index.html
+	header @siempreNuevo Cache-Control "no-cache"
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	file_server
+}

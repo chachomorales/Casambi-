@@ -20,6 +20,19 @@ services:
       # bitácora y los informes se fecharían con la hora del centro de datos.
       CASAMBI_TZ: ${CASAMBI_TZ:-America/Guatemala}
 
+  # Los simuladores de preventa en la web (Incendios, y luego CCTV, WiFi y
+  # Casambi Coverage). Archivos estáticos que sube web/tools/publicar.sh del
+  # repositorio casambi-wifi-coverage; ver despliegue/README.md, «Simuladores».
+  simuladores:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    # Igual que la app: solo en loopback, para comprobar desde el servidor.
+    ports:
+      - "127.0.0.1:8001:80"
+    volumes:
+      - /opt/simuladores/www:/srv:ro
+      - ./despliegue/simuladores/Caddyfile:/etc/caddy/Caddyfile:ro
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -28,6 +41,7 @@ services:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?falta en .env — se copia del panel de Cloudflare Zero Trust}
     depends_on:
       - casambi
+      - simuladores
 
 volumes:
   casambi-data:
