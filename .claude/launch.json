@@ -7,7 +7,8 @@
       "runtimeArgs": [
         "CASAMBI_MODE=desktop",
         "CASAMBI_HOME=/Users/emorales/Developer/CASAMBI",
-        ".venv/bin/python", "-c",
+        ".venv/bin/python",
+        "-c",
         "from app import app; app.run(host='127.0.0.1', port=5055, debug=False, use_reloader=False)"
       ],
       "port": 5055
@@ -15,7 +16,23 @@
     {
       "name": "casambi-app",
       "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["desktop.py"]
+      "runtimeArgs": [
+        "desktop.py"
+      ]
+    },
+    {
+      "name": "simuladores-web",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "/Users/emorales/Developer/casambi-wifi-coverage/web/www"
+      ],
+      "port": 8765
     }
   ]
 }
