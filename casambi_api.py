@@ -4,11 +4,32 @@ Docs: https://developer.casambi.com/
 """
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
 
 BASE_URL = "https://door.casambi.com"
+
+# La nube corta con 429 si se le pide mucho seguido, también en las lecturas:
+# dos pasadas por las 46 redes en un minuto bastaron (2026-11-24). Se espera lo
+# que diga Retry-After —o 2, 4 y 8 s— antes de rendirse.
+REINTENTOS_429 = 3
+ESPERA_MAXIMA_429 = 30
+
+
+def _con_reintentos(peticion):
+    resp = peticion()
+    for intento in range(REINTENTOS_429):
+        if resp.status_code != 429:
+            break
+        try:
+            espera = float(resp.headers.get("Retry-After") or 0)
+        except ValueError:
+            espera = 0
+        time.sleep(min(ESPERA_MAXIMA_429, espera or 2 ** (intento + 1)))
+        resp = peticion()
+    return resp
 
 # La nube conserva 60 días de datapoints; el formato de `from`/`to` es UTC.
 DIAS_DATAPOINTS = 60
@@ -52,7 +73,8 @@ class CasambiClient:
     def _get(self, path: str, network_id: str = None, params: dict = None) -> dict:
         url = f"{BASE_URL}{path}"
         headers = self._headers_for(network_id) if network_id else self._headers
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp = _con_reintentos(
+            lambda: requests.get(url, headers=headers, params=params, timeout=30))
         if not resp.ok:
             raise CasambiAPIError(f"GET {path} → {resp.status_code}: {resp.text}")
         return resp.json()

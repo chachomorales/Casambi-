@@ -43,8 +43,9 @@ application.wsgi_app = ProxyFix(
 
 # Las lecturas de temperatura y potencia se guardan desde el arranque, no desde
 # la primera visita: un fin de semana sin nadie abriendo la web no debe dejar
-# un hueco en las gráficas.
-from app import arrancar_registro  # noqa: E402
+# un hueco en las gráficas. Por lo mismo el resumen de la portada se relee
+# solo: una pantalla de monitoreo no puede depender de que alguien recargue.
+from app import arrancar_monitor, arrancar_registro  # noqa: E402
 import logging  # noqa: E402
 
 # Flask solo enseña de WARNING para arriba fuera de modo debug, y la línea de
@@ -53,3 +54,4 @@ import logging  # noqa: E402
 application.logger.setLevel(logging.INFO)
 
 arrancar_registro()
+arrancar_monitor()

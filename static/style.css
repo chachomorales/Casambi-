@@ -1465,3 +1465,21 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
 }
 .temp-muestra { margin-left: 8px; border: 1px solid var(--border); }
 #tbl-temperatura td:first-child { white-space: nowrap; }
+
+/* Portada como monitoreo: lo que cambió desde la lectura anterior */
+.portada-cambios {
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--blue);
+  border-radius: 0;
+  background: #fff;
+  font-size: 13px;
+}
+.portada-cambios b { display: block; margin-bottom: 4px; color: var(--navy); }
+.portada-cambios-vacio { border-left-color: var(--border); color: #778; }
+.portada-cambios-vacio b { margin-bottom: 0; font-weight: 400; color: #778; }
+.portada-cambio-red { font-weight: 700; color: var(--navy); }
+#tbl-redes tr.fila-cambio td { background: #eef5fc; }
+.portada-cambio { display: block; font-size: 12px; color: var(--blue); }
+.portada-anterior { display: block; margin-top: 3px; font-size: 11px; color: var(--txt-aviso); }

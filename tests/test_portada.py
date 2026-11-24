@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 import app as app_module
 import report
 
-from conftest import RED_ID
+import pytest
+
+from conftest import META_RED, RED_ID
 
 AHORA = datetime(2026, 11, 24, 12, 0)
 RED = {"units": [{"id": i, "name": f"Luz {i}", "type": "Luminaire"} for i in (1, 2, 3)],
@@ -146,6 +148,8 @@ def test_cargar_el_resumen_lee_cada_red(app_cargada):
 
 
 def test_una_red_que_falla_no_tumba_el_resumen(app_cargada, monkeypatch):
+    app_module._state["resumen"] = None   # primera lectura: no hay fila que conservar
+
     def falla(network_id):
         raise app_module.CasambiAPIError("GET → 503")
     monkeypatch.setattr(app_cargada.cliente_api_falso, "get_network", falla)
@@ -182,3 +186,77 @@ def test_desde_una_red_se_vuelve_a_la_portada(cliente):
     html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
     assert 'class="volver-portada"' in html
     assert "Resumen de redes" in html
+
+
+# ── Monitoreo: la portada se pone al día sola ─────────────────────────────────
+
+def test_la_version_es_la_hora_de_la_lectura(cliente):
+    assert cliente.get("/resumen/version").get_json() == {
+        "version": "2026-09-18T12:00:00"}
+    app_module._state["resumen"] = None
+    assert cliente.get("/resumen/version").get_json() == {"version": None}
+
+
+def test_la_portada_lleva_lo_necesario_para_comparar(cliente):
+    html = cliente.get("/").get_data(as_text=True)
+    assert 'data-version="2026-09-18T12:00:00"' in html
+    assert f'data-red="{RED_ID}"' in html
+    assert 'data-estado="En línea"' in html
+
+
+def test_en_escritorio_ni_se_relee_sola_ni_lo_promete(cliente):
+    assert app_module.arrancar_monitor() is False
+    html = cliente.get("/").get_data(as_text=True)
+    assert "Se actualiza sola" not in html
+    assert 'data-monitor=""' in html
+
+
+def test_con_monitor_la_portada_lo_dice(cliente, monkeypatch):
+    monkeypatch.setattr(app_module.config, "MONITOR_ACTIVO", True)
+    html = cliente.get("/").get_data(as_text=True)
+    assert "Se actualiza sola cada 15 min" in html
+    assert 'data-monitor="15"' in html
+
+
+def test_una_red_que_falla_al_releer_conserva_su_fila(app_cargada, monkeypatch):
+    """Un 429 pasajero no debe pintar la red de «No se pudo leer»."""
+    app_module._cargar_resumen()
+    buena = app_module._state["resumen"]["redes"][0]
+
+    leer = app_cargada.cliente_api_falso.get_network
+
+    def falla_la_nuestra(network_id):
+        if network_id == RED_ID:
+            raise app_module.CasambiAPIError("GET → 429")
+        return leer(network_id)
+
+    otra = dict(META_RED, id="otra-red", name="Otra red")
+    monkeypatch.setattr(app_module, "_get_networks", lambda: [dict(META_RED), otra])
+    monkeypatch.setattr(app_cargada.cliente_api_falso, "get_network", falla_la_nuestra)
+    app_module._cargar_resumen()
+    filas = {f["id"]: f for f in app_module._state["resumen"]["redes"]}
+    assert filas[RED_ID]["nivel"] == buena["nivel"] and filas[RED_ID]["anterior"]
+    assert "429" in filas[RED_ID]["error"]
+    assert filas["otra-red"]["nivel"] == "online" and not filas["otra-red"].get("anterior")
+
+
+def test_si_no_responde_ninguna_se_queda_la_lectura_anterior(app_cargada, monkeypatch):
+    previa = app_module._state["resumen"]
+
+    def falla(network_id):
+        raise app_module.CasambiAPIError("GET → 429")
+    monkeypatch.setattr(app_cargada.cliente_api_falso, "get_network", falla)
+    with pytest.raises(app_module.CasambiAPIError):
+        app_module._cargar_resumen()
+    assert app_module._state["resumen"] is previa
+
+
+def test_un_429_se_reintenta(monkeypatch):
+    import casambi_api
+
+    class Resp:
+        def __init__(self, codigo):
+            self.status_code, self.headers = codigo, {"Retry-After": "0"}
+    respuestas = [Resp(429), Resp(429), Resp(200)]
+    monkeypatch.setattr(casambi_api.time, "sleep", lambda s: None)
+    assert casambi_api._con_reintentos(lambda: respuestas.pop(0)).status_code == 200

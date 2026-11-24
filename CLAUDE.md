@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 333 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 340 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 297:
+# propósito para que PyInstaller no las meta en el .app. Los otros 304:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 333 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 340 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -213,6 +213,21 @@ Conectividad no pueden contar cosas distintas. Lo que se vio en el barrido del
 - Umbrales: un corte de red suelto no avisa (`MIN_CORTES_RED_AVISO = 2`), ≥5 es
   grave; ≥20 caídas parciales en la semana es un equipo que entra y sale (LANCO
   llegó a 639); ≥10 % de equipos sin señal es grave. Una red por aviso.
+
+**La portada sirve de pantalla de monitoreo.** En el servidor, `arrancar_monitor()`
+(desde `wsgi.py`) relee el resumen cada 15 min (`CASAMBI_MONITOR_MINUTOS`) aunque
+nadie mire, por la misma tarea `resumen` que el botón Actualizar. La página abierta
+pregunta cada minuto a `/resumen/version` y, si hay lectura nueva, se recarga sin
+perder la búsqueda y marca lo que cambió respecto a la anterior (estado, equipos sin
+señal, cortes nuevos). La foto de cada lectura vive en el `sessionStorage` de esa
+pestaña. En el `.app` no se relee solo: la ventana está abierta a ratos.
+
+**La nube responde 429 también a las lecturas**, no solo a los inicios de sesión:
+dos pasadas por las 46 redes en un minuto bastaron (2026-11-24). De ahí tres cosas:
+`casambi_api._con_reintentos()` espera y reintenta tres veces; una red que falla al
+releer conserva su fila anterior con su hora (`anterior`) en vez de salir «No se
+pudo leer», y si no responde ninguna se queda la lectura entera; y el registro
+arranca a los 5 min, no al minuto, para no coincidir con la primera del monitoreo.
 
 ## El registro de temperatura y potencia
 

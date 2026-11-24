@@ -499,6 +499,7 @@ def _resumir_red(meta: dict) -> dict:
             "sitio": meta.get("site_name") or ""}
     with _state_lock:
         client = _state["clients"].get(meta.get("account_id"))
+    fila["leida"] = config.ahora()
     try:
         if client is None:
             raise CasambiAPIError("La red no pertenece a ninguna cuenta configurada.")
@@ -530,10 +531,63 @@ def _cargar_resumen(progress=None) -> None:
             if progress:
                 progress(f"Leída {fila['nombre']} ({hechas} de {len(redes)})…",
                          hechas, len(redes))
+    # Una red que esta vez no se pudo leer conserva su fila anterior, con su
+    # hora: si no, un 429 pasajero pintaba la portada entera de «No se pudo
+    # leer» y la pantalla de monitoreo lo daba como 46 cambios. Si no se pudo
+    # leer ninguna, se queda la lectura anterior completa.
+    with _state_lock:
+        previo = _state["resumen"]
+    anteriores = {f["id"]: f for f in (previo["redes"] if previo else [])
+                  if f["nivel"] != "error"}
+    if filas and previo and all(f["nivel"] == "error" for f in filas):
+        raise CasambiAPIError(f"No se pudo leer ninguna red: {filas[0]['error']}")
+    filas = [{**anteriores[f["id"]], "anterior": True, "error": f["error"]}
+             if f["nivel"] == "error" and f["id"] in anteriores else f
+             for f in filas]
     filas.sort(key=_clave_fila_resumen)
     with _state_lock:
         _state["resumen"] = {"redes": filas, "leido_en": config.ahora(),
                              "momento": time.monotonic()}
+
+
+def _bucle_monitor() -> None:
+    """
+    Relee el resumen de todas las redes cada MONITOR_MINUTOS.
+
+    Pasa por `_start_loading` con la misma clave que la portada: si alguien
+    pulsa Actualizar justo entonces, las dos peticiones comparten una lectura.
+    El resumen viejo se sigue enseñando mientras se lee el nuevo, así que una
+    pantalla de monitoreo nunca cae en la de carga por culpa de esta pasada.
+    """
+    time.sleep(60)
+    while True:
+        try:
+            if not _networks_loaded():
+                _authenticate()
+            _start_loading("resumen", _cargar_resumen)
+        except Exception:
+            app.logger.exception("Fallo al releer el resumen de redes")
+        time.sleep(config.MONITOR_MINUTOS * 60)
+
+
+_monitor_hilo: list = []
+
+
+def arrancar_monitor() -> bool:
+    """Lo llama wsgi.py. Devuelve si ha arrancado (no lo hace dos veces)."""
+    if not config.MONITOR_ACTIVO or _monitor_hilo:
+        return False
+    hilo = threading.Thread(target=_bucle_monitor, name="monitor", daemon=True)
+    _monitor_hilo.append(hilo)
+    hilo.start()
+    return True
+
+
+def _version_resumen() -> str | None:
+    """Lo que cambia con cada lectura nueva: la hora a la que se hizo."""
+    with _state_lock:
+        resumen = _state["resumen"]
+    return resumen["leido_en"].isoformat() if resumen else None
 
 
 def _resumen_vigente() -> dict | None:
@@ -562,6 +616,7 @@ def _actualizar_fila_resumen(network_id: str, network: dict, state: dict,
                 resumen["redes"][i] = {
                     "id": fila["id"], "nombre": fila["nombre"],
                     "sitio": fila["sitio"],
+                    "leida": config.ahora(),
                     **resumen_red(network, state, registro),
                 }
                 resumen["redes"].sort(key=_clave_fila_resumen)
@@ -649,9 +704,10 @@ def _ciclo_registro(ahora: float | None = None) -> dict:
 
 
 def _bucle_registro() -> None:
-    # Un minuto de margen: que el arranque y la primera visita no compitan
-    # con el registro por iniciar sesión.
-    time.sleep(60)
+    # Cinco minutos de margen: que no coincida con la primera visita ni con
+    # la primera lectura del monitoreo, que es al minuto. Juntas, las dos
+    # pasadas por las 46 redes llevan a la nube a responder 429.
+    time.sleep(5 * 60)
     while True:
         try:
             cifras = _ciclo_registro()
@@ -1479,7 +1535,15 @@ def index():
         cifras=_cifras_portada(resumen["redes"]),
         avisos=avisos_portada(resumen["redes"]),
         dias_resumen=DIAS_RESUMEN,
+        version_resumen=_version_resumen(),
+        monitor_minutos=config.MONITOR_MINUTOS if config.MONITOR_ACTIVO else None,
     )
+
+
+@app.route("/resumen/version")
+def resumen_version():
+    """La portada abierta pregunta esto cada minuto para saber si recargarse."""
+    return jsonify({"version": _version_resumen()})
 
 
 @app.route("/resumen/refresh", methods=["POST"])

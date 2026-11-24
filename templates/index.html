@@ -4,11 +4,19 @@
 {% macro miles(n) %}{{ "{:,}".format(n).replace(",", ".") }}{% endmacro %}
 
 {% block content %}
+{% set etiquetas = {'online': 'En línea', 'gateway-offline': 'Gateway caído',
+                    'sin-gateway': 'Sin gateway', 'sin-dispositivos': 'Vacía',
+                    'error': 'No se pudo leer'} %}
+<div id="portada" data-version="{{ version_resumen }}"
+     data-url-version="{{ url_for('resumen_version') }}"
+     data-monitor="{{ monitor_minutos or '' }}"
+     data-hora="{{ resumen.leido_en.strftime('%H:%M') }}">
 <div class="page-header">
   <div>
     <h1>Redes Casambi</h1>
     <div class="page-meta">
       <span title="{{ resumen.leido_en.strftime('%d/%m/%Y %H:%M') }}">Leído a las {{ resumen.leido_en.strftime('%H:%M') }} · {{ resumen.leido_en|hace }}</span>
+      {% if monitor_minutos %}<span>Se actualiza sola cada {{ monitor_minutos }} min</span>{% endif %}
     </div>
   </div>
   <div class="page-actions">
@@ -18,6 +26,8 @@
     </form>
   </div>
 </div>
+
+<div class="portada-cambios" id="portada-cambios" hidden></div>
 
 {% if resumen.redes %}
 <div class="cards">
@@ -72,7 +82,9 @@
     </tr></thead>
     <tbody>
       {% for r in resumen.redes %}
-      <tr>
+      <tr data-red="{{ r.id }}" data-nombre="{{ r.nombre }}" data-estado="{{ etiquetas[r.nivel] }}"
+          data-sinsenal="{{ r.no_responden if r.nivel == 'online' else '' }}"
+          data-cortes="{{ r.cortes_red if r.historial == 'ok' else '' }}">
         <td data-label="Red"><a href="{{ url_for('network_view', network_id=r.id) }}" class="portada-red">{{ r.nombre }}</a>{% if r.sitio %}<span class="portada-sitio">{{ r.sitio }}</span>{% endif %}</td>
         <td data-label="Estado">
           {%- if r.nivel == 'online' %}<span class="estado estado-responde">En línea</span>
@@ -80,6 +92,7 @@
           {%- elif r.nivel == 'sin-gateway' %}<span class="estado estado-sin-lectura">Sin gateway</span>
           {%- elif r.nivel == 'sin-dispositivos' %}<span class="estado estado-sin-lectura">Vacía</span>
           {%- else %}<span class="estado estado-no-responde" title="{{ r.error }}">No se pudo leer</span>{% endif -%}
+          {%- if r.anterior %}<span class="portada-anterior" title="{{ r.error }}">Lectura de las {{ r.leida.strftime('%H:%M') }}: la última no respondió</span>{% endif -%}
         </td>
         <td data-label="Gateway">{{ r.gateway or '—' }}</td>
         <td data-label="Equipos" class="num">{{ miles(r.total) }}</td>
@@ -104,18 +117,105 @@
 {% else %}
 <p class="hint">No hay redes en las cuentas configuradas.</p>
 {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script nonce="{{ csp_nonce() }}">
-  document.querySelectorAll('.table-search').forEach(input => {
-    const table = document.getElementById(input.dataset.target);
-    input.addEventListener('input', () => {
-      const q = input.value.toLowerCase();
-      [...table.tBodies[0].rows].forEach(row => {
+  (function () {
+    const raiz = document.getElementById('portada');
+    const buscador = document.querySelector('.table-search');
+    const tabla = buscador && document.getElementById(buscador.dataset.target);
+    const CLAVE = 'casambi-portada', CLAVE_BUSQUEDA = 'casambi-portada-busqueda';
+    const leer = k => { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } };
+    const guardar = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+    function filtrar() {
+      const q = buscador.value.toLowerCase();
+      [...tabla.tBodies[0].rows].forEach(row => {
         row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
       });
-    });
-  });
+    }
+    if (buscador) {
+      buscador.addEventListener('input', filtrar);
+      // Al recargarse sola, la búsqueda que estaba puesta sigue puesta.
+      const previa = leer(CLAVE_BUSQUEDA);
+      if (previa) { buscador.value = previa; filtrar(); }
+      sessionStorage.removeItem(CLAVE_BUSQUEDA);
+    }
+
+    // ── Qué cambió desde la lectura anterior ──────────────────────────────
+    // La foto de cada lectura se guarda en la pestaña (sessionStorage). Al
+    // llegar una lectura nueva se compara con la anterior; una recarga a mano
+    // con la misma lectura vuelve a enseñar los mismos cambios.
+    const filas = [...document.querySelectorAll('#tbl-redes tbody tr[data-red]')];
+    const foto = {};
+    filas.forEach(f => { foto[f.dataset.red] = {
+      nombre: f.dataset.nombre, estado: f.dataset.estado,
+      sinsenal: f.dataset.sinsenal, cortes: f.dataset.cortes }; });
+    const version = raiz.dataset.version;
+    const guardado = leer(CLAVE);
+    let anterior = null;
+    if (guardado && guardado.version !== version) {
+      anterior = {hora: guardado.hora, foto: guardado.foto};
+    } else if (guardado) {
+      anterior = guardado.anterior;
+    }
+    guardar(CLAVE, {version, hora: raiz.dataset.hora, foto, anterior});
+
+    if (anterior) {
+      const cambios = [];
+      filas.forEach(f => {
+        const ahora = foto[f.dataset.red], antes = anterior.foto[f.dataset.red];
+        const partes = [];
+        if (!antes) {
+          partes.push('red nueva');
+        } else {
+          if (antes.estado !== ahora.estado) partes.push(antes.estado + ' → ' + ahora.estado);
+          if (antes.sinsenal !== ahora.sinsenal && antes.sinsenal !== '' && ahora.sinsenal !== '')
+            partes.push('sin señal ' + antes.sinsenal + ' → ' + ahora.sinsenal);
+          if (antes.cortes !== '' && ahora.cortes !== '' && Number(ahora.cortes) > Number(antes.cortes))
+            partes.push('cortes de red ' + antes.cortes + ' → ' + ahora.cortes);
+        }
+        if (!partes.length) return;
+        f.classList.add('fila-cambio');
+        const nota = document.createElement('span');
+        nota.className = 'portada-cambio';
+        nota.textContent = partes.join(' · ');
+        f.cells[0].appendChild(nota);
+        cambios.push([ahora.nombre, partes.join(' · ')]);
+      });
+      const caja = document.getElementById('portada-cambios');
+      const titulo = document.createElement('b');
+      titulo.textContent = cambios.length
+        ? 'Cambios desde la lectura de las ' + anterior.hora
+        : 'Sin cambios desde la lectura de las ' + anterior.hora;
+      caja.appendChild(titulo);
+      cambios.forEach(([nombre, texto]) => {
+        const linea = document.createElement('div');
+        const n = document.createElement('span');
+        n.className = 'portada-cambio-red';
+        n.textContent = nombre;
+        linea.append(n, ' ' + texto);
+        caja.appendChild(linea);
+      });
+      caja.classList.toggle('portada-cambios-vacio', !cambios.length);
+      caja.hidden = false;
+    }
+
+    // ── Recarga sola cuando el servidor tiene una lectura nueva ───────────
+    if (!raiz.dataset.monitor) return;
+    setInterval(async () => {
+      try {
+        const r = await fetch(raiz.dataset.urlVersion, {cache: 'no-store'});
+        if (!r.ok) return;
+        const {version: nueva} = await r.json();
+        if (nueva && nueva !== version) {
+          if (buscador && buscador.value) guardar(CLAVE_BUSQUEDA, buscador.value);
+          location.reload();
+        }
+      } catch (e) { /* sin red un momento: se vuelve a probar en un minuto */ }
+    }, 60000);
+  })();
 </script>
 {% endblock %}

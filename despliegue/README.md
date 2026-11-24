@@ -197,6 +197,11 @@ mínimo) y `CASAMBI_REGISTRO_DIAS` lo que se conserva (400). Guarda en
 `/data/data/registro.db`, que entra en la copia diaria con el resto del volumen;
 cada pasada deja una línea `Registro: …` en `docker compose logs casambi`.
 
+La portada también se relee sola, cada 15 minutos, para poder dejarla abierta como
+pantalla de monitoreo. `CASAMBI_MONITOR=0` lo apaga y `CASAMBI_MONITOR_MINUTOS` cambia
+la cadencia (5 como mínimo). Cada pasada son ~140 consultas a la nube; no la bajes
+mucho, porque la nube responde 429 si se le pide demasiado seguido.
+
 ### 3. Cloudflare
 
 **El dominio de la app y el de las identidades son independientes.** La app vive

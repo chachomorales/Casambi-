@@ -181,6 +181,13 @@ REGISTRO_MINUTOS = max(5, _entero("CASAMBI_REGISTRO_MINUTOS", 15))
 # espacio no se nota (decenas de MB).
 REGISTRO_DIAS = _entero("CASAMBI_REGISTRO_DIAS", 400)
 
+# La portada como pantalla de monitoreo: el servidor vuelve a leer todas las
+# redes cada tanto aunque nadie la mire, y la página abierta se pone al día
+# sola. Mismo criterio que el registro: solo en el servidor.
+MONITOR_ACTIVO = (os.environ.get("CASAMBI_MONITOR")
+                  or ("0" if ES_ESCRITORIO else "1")).strip() == "1"
+MONITOR_MINUTOS = max(5, _entero("CASAMBI_MONITOR_MINUTOS", 15))
+
 
 def aplicar(app) -> None:
     """Vuelca la configuración sobre la app de Flask ya creada."""
