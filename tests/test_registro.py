@@ -109,3 +109,66 @@ def test_si_falla_todo_se_rehace_la_sesion(app_cargada, monkeypatch, tmp_path):
     monkeypatch.setattr(app_cargada.cliente_api_falso, "get_network_state", falla)
     assert app_module._ciclo_registro(ahora=10_000.0)["errores"] == 1
     assert app_module._state["networks"] is None
+
+
+# ── Gráfica de temperatura ────────────────────────────────────────────────────
+
+H = 3_600_000
+
+
+def test_la_serie_promedia_por_tramos_y_las_cifras_no(tmp_path):
+    conn = registro.abrir(tmp_path / "r.db")
+    base = (T0 // H) * H
+    registro.guardar(conn, "red", [(1, "Temperature", base, 30.0),
+                                   (1, "Temperature", base + 900_000, 50.0),
+                                   (1, "Temperature", base + H, 40.0)])
+    s = registro.serie(conn, "red", "Temperature", base, H)[1]
+    assert s["puntos"] == [[base + H // 2, 40.0], [base + H + H // 2, 40.0]]
+    assert (s["min"], s["max"], s["media"]) == (30.0, 50.0, 40.0)
+    assert (s["ultima"], s["ultima_momento"]) == (40.0, base + H)
+
+
+def test_la_serie_no_mezcla_redes_ni_magnitudes(tmp_path):
+    conn = registro.abrir(tmp_path / "r.db")
+    registro.guardar(conn, "a", [(1, "Temperature", T0, 30.0), (1, "Power", T0, 9.0)])
+    registro.guardar(conn, "b", [(1, "Temperature", T0, 70.0)])
+    assert registro.serie(conn, "a", "Temperature", 0, H)[1]["max"] == 30.0
+    assert registro.primera_lectura(conn, "c", "Temperature") is None
+
+
+def test_el_tramo_no_baja_de_15_min_ni_pasa_de_200_puntos():
+    assert app_module._tramo(0, 86_400_000) == 15 * 60_000
+    tramo = app_module._tramo(0, 180 * 86_400_000)
+    assert tramo % (15 * 60_000) == 0
+    assert 180 * 86_400_000 / tramo <= app_module.PUNTOS_GRAFICA
+
+
+def _con_temperaturas(monkeypatch, tmp_path, ahora_ms):
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "registro.db")
+    conn = registro.abrir(tmp_path / "registro.db")
+    registro.guardar(conn, RED_ID, [(1, "Temperature", ahora_ms - 2 * H, 41.0),
+                                    (1, "Temperature", ahora_ms - H, 45.0),
+                                    (4, "Temperature", ahora_ms - H, 33.0)])
+    conn.close()
+
+
+def test_sin_registro_no_hay_pestana(cliente, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "no-existe.db")
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="temperatura"' not in html
+
+
+def test_con_lecturas_sale_la_pestana_y_su_json(cliente, monkeypatch, tmp_path):
+    import time
+    ahora = int(time.time() * 1000)
+    _con_temperaturas(monkeypatch, tmp_path, ahora)
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="temperatura"' in html
+    d = cliente.get(f"/network/{RED_ID}/temperaturas?rango=24h").get_json()
+    assert [u["nombre"] for u in d["unidades"]] == ["Luminaria pasillo", "Pasarela"]
+    assert d["unidades"][0]["max"] == 45.0
+    assert d["desfase_min"] == -360
+
+
+def test_un_rango_inventado_es_un_400(cliente):
+    assert cliente.get(f"/network/{RED_ID}/temperaturas?rango=1y").status_code == 400

@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 327 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 333 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 291:
+# propósito para que PyInstaller no las meta en el .app. Los otros 297:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 327 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 333 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -176,7 +176,7 @@ saber al tocar el código:
 | `registro.py` | Registro propio de temperatura y medidas eléctricas en SQLite (`data/registro.db`), para graficarlas |
 | `credentials.py` | Cuentas múltiples en el Llavero de macOS vía `/usr/bin/security` |
 | `cobertura.py` | Importa proyectos `.casambi` del Simulador de Cobertura: plano, nodos y paredes |
-| `templates/`, `static/` | Interfaz: `network.html` (9 pestañas) es el grueso |
+| `templates/`, `static/` | Interfaz: `network.html` (10 pestañas) es el grueso |
 
 ## Cómo fluyen los datos
 
@@ -235,6 +235,18 @@ escritorio.
   el Lab y en Aseguradora General N1, que no tenían gateway en línea. Entrarán
   solos cuando lo tengan.
 - Si fallan todas las redes de una pasada, se rehace la sesión en la siguiente.
+
+**La pestaña Temperatura** sale solo si `registro.db` tiene lecturas de esa red
+(`_primera_temperatura()`), así que en el `.app` no aparece. Pide los datos a
+`/network/<id>/temperaturas?rango=24h|7d|30d|todo` al abrirse, no con la página.
+`registro.serie()` promedia por tramos para no pasar de 200 puntos por unidad
+(`_tramo()`, múltiplo de 15 min); mínima, máxima, media y última salen de las
+lecturas sin promediar, para que un pico no se diluya. La gráfica es SVG hecho
+en el propio JS, sin librería: la CSP no deja cargar scripts de fuera. Se dibuja
+al ancho real de la caja —escalada, en el teléfono los rótulos salían en 5 px— y
+corta la línea donde faltan lecturas en vez de unir los extremos. Las horas se
+rotulan en la de Guatemala con el desfase que manda el servidor
+(`desfase_min`), no con la del navegador.
 
 ## Lo que la API no da, y el usuario anota
 

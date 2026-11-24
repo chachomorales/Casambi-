@@ -673,6 +673,35 @@ def arrancar_registro() -> bool:
     return True
 
 
+# ── Gráfica de temperatura ───────────────────────────────────────────────────
+# Lee del registro propio (ver más arriba): la nube no guarda la temperatura.
+
+RANGOS_TEMPERATURA = {"24h": 1, "7d": 7, "30d": 30, "todo": None}
+PUNTOS_GRAFICA = 200          # por unidad: más que eso no cabe en el ancho
+TRAMO_MINIMO = 15 * 60 * 1000  # la cadencia del registro; menos no aporta
+
+
+def _primera_temperatura(network_id: str) -> datetime | None:
+    """Desde cuándo hay temperaturas guardadas de la red, o None si no hay."""
+    if not REGISTRO_DB.is_file():
+        return None
+    conn = registro.abrir(REGISTRO_DB)
+    try:
+        momento = registro.primera_lectura(conn, network_id, "Temperature")
+    finally:
+        conn.close()
+    if momento is None:
+        return None
+    return datetime.fromtimestamp(momento / 1000, config.zona_horaria()).replace(
+        tzinfo=None)
+
+
+def _tramo(desde: int, hasta: int) -> int:
+    """Ancho del promedio para que la gráfica no pase de PUNTOS_GRAFICA."""
+    bruto = -(-(hasta - desde) // PUNTOS_GRAFICA)
+    return max(1, -(-bruto // TRAMO_MINIMO)) * TRAMO_MINIMO
+
+
 # ── Imágenes de la red (galería y fotos de elementos) ────────────────────────
 # La galería de Casambi (network['photos']) trae las posiciones de los
 # elementos colocados sobre cada foto; las imágenes se descargan una sola vez
@@ -1637,8 +1666,48 @@ def network_view(network_id):
         error=_error_autenticacion(),
         current_id=str(network_id),
         cuentas=credentials.list_accounts(_HOME),
+        temperatura_desde=_primera_temperatura(network_id),
         **ctx,
     )
+
+
+@app.route("/network/<network_id>/temperaturas")
+@require_network
+def temperaturas(network_id):
+    """Series de temperatura de la red para la gráfica, en JSON."""
+    rango = request.args.get("rango", "7d")
+    if rango not in RANGOS_TEMPERATURA:
+        abort(400)
+    hasta = int(time.time() * 1000)
+    # Guatemala no cambia de hora, así que un desfase fijo basta para que el
+    # navegador rotule en hora local aunque quien mira esté en otro país.
+    desfase = int(datetime.now(config.zona_horaria()).utcoffset()
+                  .total_seconds() // 60)
+    vacio = {"unidades": [], "desde": None, "hasta": hasta, "tramo": TRAMO_MINIMO,
+             "desfase_min": desfase}
+    if not REGISTRO_DB.is_file():
+        return jsonify(vacio)
+
+    conn = registro.abrir(REGISTRO_DB)
+    try:
+        primera = registro.primera_lectura(conn, network_id, "Temperature")
+        if primera is None:
+            return jsonify(vacio)
+        dias = RANGOS_TEMPERATURA[rango]
+        desde = primera if dias is None else max(primera, hasta - dias * 86_400_000)
+        tramo = _tramo(desde, hasta)
+        datos = registro.serie(conn, network_id, "Temperature", desde, tramo)
+    finally:
+        conn.close()
+
+    with _state_lock:
+        cacheado = _state["cache"].get(str(network_id))
+    nombres = {u.get("id"): u.get("name") for u in
+               (cacheado["network"].get("units", []) if cacheado else [])}
+    unidades = [{"id": u, "nombre": nombres.get(u) or f"ID {u}", **d}
+                for u, d in datos.items()]
+    unidades.sort(key=lambda u: -u["max"])
+    return jsonify({**vacio, "unidades": unidades, "desde": desde, "tramo": tramo})
 
 
 @app.route("/network/<network_id>/refresh", methods=["POST"])

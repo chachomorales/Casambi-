@@ -1419,3 +1419,49 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   .plano-marker { min-width: 34px; height: 34px; border-radius: 17px; font-size: 12px; }
   .plano-nodo   { min-width: 34px; height: 30px; border-radius: 15px; font-size: 12px; }
 }
+
+/* ── Temperatura (gráfica del registro propio) ───────────────────────────── */
+.temp-barra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.temp-rangos, .temp-seleccion { display: flex; flex-wrap: wrap; gap: 6px; }
+.temp-rango, .temp-sel {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--navy);
+  font-size: 13px;
+  cursor: pointer;
+}
+.temp-rango.activo { background: var(--blue); border-color: var(--blue); color: #fff; }
+.temp-sel { color: var(--blue); }
+
+.temp-grafica { position: relative; }
+.temp-svg { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.temp-rejilla { stroke: #e3ecf5; stroke-width: 1; }
+.temp-eje { font-size: 11px; fill: #778; }
+.temp-linea { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.temp-guia { stroke: #99a; stroke-width: 1; stroke-dasharray: 3 3; }
+.temp-globo {
+  position: absolute;
+  top: 10px;
+  z-index: 2;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(31,56,100,.15);
+  font-size: 12px;
+  pointer-events: none;
+}
+.temp-globo b { display: block; margin-bottom: 4px; color: var(--navy); }
+.temp-globo i, .temp-muestra {
+  display: inline-block;
+  width: 10px; height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.temp-muestra { margin-left: 8px; border: 1px solid var(--border); }
+#tbl-temperatura td:first-child { white-space: nowrap; }

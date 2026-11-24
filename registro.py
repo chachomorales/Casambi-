@@ -82,3 +82,52 @@ def contar(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(*), COUNT(DISTINCT red), MAX(momento) FROM lecturas"
     ).fetchone()
     return {"lecturas": total, "redes": redes, "ultima": ultima}
+
+
+def primera_lectura(conn: sqlite3.Connection, red: str, magnitud: str) -> int | None:
+    """Momento (ms) de la lectura más antigua de esa magnitud en la red."""
+    (momento,) = conn.execute(
+        "SELECT MIN(momento) FROM lecturas WHERE red = ? AND magnitud = ?",
+        (str(red), magnitud),
+    ).fetchone()
+    return momento
+
+
+def serie(conn: sqlite3.Connection, red: str, magnitud: str,
+          desde: int, tramo: int) -> dict:
+    """
+    Lecturas de cada unidad desde `desde` (ms), promediadas por tramos de `tramo` ms.
+
+    Con 41 unidades y una lectura cada 15 min, seis meses son más de 700.000
+    puntos: ni el navegador los dibuja ni hacen falta, porque la gráfica no
+    tiene tantos píxeles. Las cifras de la tabla (mínimo, máximo, media y
+    última) salen de las lecturas sin promediar, para que un pico no se diluya.
+    """
+    red = str(red)
+    puntos: dict[int, list] = {}
+    for unidad, bloque, media in conn.execute(
+        "SELECT unidad, momento / ? AS bloque, AVG(valor) FROM lecturas"
+        " WHERE red = ? AND magnitud = ? AND momento >= ?"
+        " GROUP BY unidad, bloque ORDER BY unidad, bloque",
+        (tramo, red, magnitud, desde),
+    ):
+        # El punto va en el centro de su tramo: al principio, una media de
+        # varias horas aparecería adelantada respecto a lo que resume.
+        puntos.setdefault(unidad, []).append(
+            [bloque * tramo + tramo // 2, round(media, 1)])
+
+    cifras = {}
+    for unidad, minimo, maximo, media, ultima_momento in conn.execute(
+        "SELECT unidad, MIN(valor), MAX(valor), AVG(valor), MAX(momento)"
+        " FROM lecturas WHERE red = ? AND magnitud = ? AND momento >= ?"
+        " GROUP BY unidad",
+        (red, magnitud, desde),
+    ):
+        (ultima,) = conn.execute(
+            "SELECT valor FROM lecturas WHERE red = ? AND magnitud = ?"
+            " AND unidad = ? AND momento = ?",
+            (red, magnitud, unidad, ultima_momento),
+        ).fetchone()
+        cifras[unidad] = {"min": minimo, "max": maximo, "media": round(media, 1),
+                          "ultima": ultima, "ultima_momento": ultima_momento}
+    return {u: {"puntos": puntos.get(u, []), **c} for u, c in cifras.items()}

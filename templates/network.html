@@ -96,6 +96,9 @@
     <span class="badge badge-alerta">{{ conexion.no_responden }} sin señal</span>
     {%- endif %}
   </button>
+  {%- if temperatura_desde %}
+  <button class="tab" data-tab="temperatura">Temperatura</button>
+  {%- endif %}
   <button class="tab" data-tab="luminarias">Luminarias <span class="badge">{{ luminarias|length }}</span></button>
   <button class="tab" data-tab="pulsadores">Pulsadores <span class="badge">{{ pulsadores|length }}</span></button>
   <button class="tab" data-tab="sensores">Sensores <span class="badge">{{ sensores|length }}</span></button>
@@ -240,6 +243,38 @@
     </table>
   </div>
 </section>
+
+{% if temperatura_desde %}
+<!-- Temperatura: del registro propio del servidor, no de la nube -->
+<section class="tab-panel" id="panel-temperatura"
+         data-url="{{ url_for('temperaturas', network_id=network_id) }}">
+  <div class="temp-barra">
+    <div class="temp-rangos" role="group" aria-label="Periodo">
+      <button type="button" class="temp-rango" data-rango="24h">24 h</button>
+      <button type="button" class="temp-rango activo" data-rango="7d">7 días</button>
+      <button type="button" class="temp-rango" data-rango="30d">30 días</button>
+      <button type="button" class="temp-rango" data-rango="todo">Todo</button>
+    </div>
+    <div class="temp-seleccion" role="group" aria-label="Unidades en la gráfica">
+      <button type="button" class="temp-sel" data-sel="calientes">Las 6 más calientes</button>
+      <button type="button" class="temp-sel" data-sel="todas">Todas</button>
+      <button type="button" class="temp-sel" data-sel="ninguna">Ninguna</button>
+    </div>
+  </div>
+  <div class="temp-grafica" id="temp-grafica" aria-live="polite"></div>
+  <p class="hint" id="temp-estado">Cargando…</p>
+  <div class="table-wrap">
+    <table id="tbl-temperatura">
+      <thead><tr>
+        <th>Ver</th><th>ID</th><th>Nombre</th><th>Última</th>
+        <th>Mínima</th><th>Máxima</th><th>Media</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="hint">Registro desde el {{ temperatura_desde.strftime('%d/%m/%Y %H:%M') }}. Es la temperatura del equipo, no la del ambiente, y sigue al nivel de regulación. Cada punto es la media de su tramo; mínima, máxima y media salen de las lecturas sin promediar. Un hueco en la línea es un rato en que la nube no recibió lecturas, casi siempre porque el gateway no respondía.</p>
+</section>
+{% endif %}
 
 <!-- Luminarias -->
 <section class="tab-panel" id="panel-luminarias">
@@ -1535,5 +1570,227 @@
       }, 6000);
     });
   });
+</script>
+<script nonce="{{ csp_nonce() }}">
+  // Gráfica de temperatura. SVG dibujado aquí y no una librería: la CSP no
+  // deja cargar scripts de fuera, y el .app no debe depender de internet.
+  (function () {
+    const panel = document.getElementById('panel-temperatura');
+    if (!panel) return;
+    const caja = document.getElementById('temp-grafica');
+    const estado = document.getElementById('temp-estado');
+    const cuerpo = document.querySelector('#tbl-temperatura tbody');
+    const NS = 'http://www.w3.org/2000/svg';
+    const COLORES = ['#C00000', '#ED7D31', '#2E75B6', '#70AD47', '#7030A0',
+                     '#00B0F0', '#1F3864', '#BF8F00', '#C55A9B', '#4D7F6B'];
+    const M = {iz: 44, de: 12, ar: 12, ab: 28};
+    let AN = 800, AL = 300;
+    let datos = null, rango = '7d', cargado = false;
+    const elegidas = new Set();
+
+    // Hora de Guatemala (el desfase lo manda el servidor) leída con getUTC*.
+    const local = ms => new Date(ms + datos.desfase_min * 60000);
+    const dos = n => String(n).padStart(2, '0');
+    const fecha = ms => { const d = local(ms); return dos(d.getUTCDate()) + '/' + dos(d.getUTCMonth() + 1); };
+    const hora = ms => { const d = local(ms); return dos(d.getUTCHours()) + ':' + dos(d.getUTCMinutes()); };
+    const grados = v => (Math.round(v * 10) / 10).toLocaleString('es') + ' °C';
+
+    function el(nombre, attrs, padre) {
+      const e = document.createElementNS(NS, nombre);
+      Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+      if (padre) padre.appendChild(e);
+      return e;
+    }
+
+    function color(u) {
+      return COLORES[datos.unidades.indexOf(u) % COLORES.length];
+    }
+
+    function dibujar() {
+      // Al ancho real de la caja: escalado, en un teléfono los rótulos de
+      // los ejes quedaban en 5 px.
+      AN = Math.max(320, caja.clientWidth || 800);
+      AL = AN < 600 ? 240 : 300;
+      caja.textContent = '';
+      const series = datos.unidades.filter(u => elegidas.has(u.id) && u.puntos.length);
+      if (!series.length) {
+        estado.textContent = datos.unidades.length
+          ? 'Marca alguna unidad en la tabla para verla en la gráfica.'
+          : 'No hay lecturas en este periodo.';
+        return;
+      }
+      const t0 = datos.desde, t1 = datos.hasta;
+      let lo = Infinity, hi = -Infinity;
+      series.forEach(u => u.puntos.forEach(([, v]) => { lo = Math.min(lo, v); hi = Math.max(hi, v); }));
+      lo = Math.floor((lo - 1) / 5) * 5; hi = Math.ceil((hi + 1) / 5) * 5;
+      const x = t => M.iz + (t - t0) / Math.max(1, t1 - t0) * (AN - M.iz - M.de);
+      const y = v => AL - M.ab - (v - lo) / (hi - lo) * (AL - M.ar - M.ab);
+
+      const svg = el('svg', {viewBox: `0 0 ${AN} ${AL}`, class: 'temp-svg',
+                             role: 'img', 'aria-label': 'Temperatura por unidad'}, caja);
+      const paso = (hi - lo) > 30 ? 10 : 5;
+      for (let v = lo; v <= hi; v += paso) {
+        el('line', {x1: M.iz, x2: AN - M.de, y1: y(v), y2: y(v), class: 'temp-rejilla'}, svg);
+        el('text', {x: M.iz - 6, y: y(v) + 4, class: 'temp-eje', 'text-anchor': 'end'}, svg)
+          .textContent = v + '°';
+      }
+      const marcas = AN < 600 ? 3 : 6;
+      for (let i = 0; i <= marcas; i++) {
+        const t = t0 + (t1 - t0) * i / marcas;
+        el('text', {x: x(t), y: AL - 8, class: 'temp-eje',
+                    'text-anchor': i === 0 ? 'start' : i === marcas ? 'end' : 'middle'}, svg)
+          .textContent = (t1 - t0) <= 2 * 86400000 ? hora(t) : fecha(t);
+      }
+
+      // Se corta la línea donde faltan lecturas: unirlas inventaría el tramo.
+      const salto = Math.max(3 * datos.tramo, 2 * 3600000);
+      series.forEach(u => {
+        let d = '', previo = null;
+        u.puntos.forEach(([t, v]) => {
+          d += (previo === null || t - previo > salto ? 'M' : 'L') + x(t).toFixed(1) + ' ' + y(v).toFixed(1) + ' ';
+          previo = t;
+        });
+        el('path', {d, class: 'temp-linea', stroke: color(u)}, svg);
+        if (u.puntos.length < 40) {
+          u.puntos.forEach(([t, v]) => el('circle', {cx: x(t), cy: y(v), r: 3, fill: color(u)}, svg));
+        }
+      });
+
+      // Al pasar el ratón: la hora más cercana y el valor de cada unidad.
+      const guia = el('line', {y1: M.ar, y2: AL - M.ab, class: 'temp-guia', visibility: 'hidden'}, svg);
+      const globo = document.createElement('div');
+      globo.className = 'temp-globo'; globo.hidden = true; caja.appendChild(globo);
+      svg.addEventListener('mousemove', ev => {
+        const r = svg.getBoundingClientRect();
+        const t = t0 + ((ev.clientX - r.left) / r.width * AN - M.iz) / (AN - M.iz - M.de) * (t1 - t0);
+        const filas = [];
+        let mejor = null;
+        series.forEach(u => {
+          let p = null;
+          u.puntos.forEach(q => { if (!p || Math.abs(q[0] - t) < Math.abs(p[0] - t)) p = q; });
+          if (p && Math.abs(p[0] - t) <= datos.tramo) {
+            filas.push([u, p[1]]);
+            if (!mejor || Math.abs(p[0] - t) < Math.abs(mejor - t)) mejor = p[0];
+          }
+        });
+        if (!filas.length) { guia.setAttribute('visibility', 'hidden'); globo.hidden = true; return; }
+        guia.setAttribute('x1', x(mejor)); guia.setAttribute('x2', x(mejor));
+        guia.setAttribute('visibility', 'visible');
+        globo.textContent = '';
+        const cab = document.createElement('b');
+        cab.textContent = fecha(mejor) + ' ' + hora(mejor);
+        globo.appendChild(cab);
+        filas.sort((a, b) => b[1] - a[1]).slice(0, 12).forEach(([u, v]) => {
+          const linea = document.createElement('div');
+          const muestra = document.createElement('i');
+          muestra.style.background = color(u);
+          linea.append(muestra, u.nombre + ': ' + grados(v));
+          globo.appendChild(linea);
+        });
+        globo.hidden = false;
+        const izq = (ev.clientX - r.left) > r.width / 2;
+        globo.style.left = izq ? '' : (ev.clientX - r.left + 14) + 'px';
+        globo.style.right = izq ? (r.right - ev.clientX + 14) + 'px' : '';
+      });
+      svg.addEventListener('mouseleave', () => { guia.setAttribute('visibility', 'hidden'); globo.hidden = true; });
+
+      const puntos = series.reduce((n, u) => n + u.puntos.length, 0);
+      estado.textContent = `${series.length} de ${datos.unidades.length} unidades · ` +
+        `del ${fecha(t0)} ${hora(t0)} al ${fecha(t1)} ${hora(t1)}` +
+        (datos.tramo > 15 * 60000 ? ` · cada punto es la media de ${Math.round(datos.tramo / 60000)} min` : '') +
+        (puntos < 3 ? ' · el registro acaba de empezar: la línea irá saliendo con las próximas lecturas' : '');
+    }
+
+    function tabla() {
+      cuerpo.textContent = '';
+      if (!datos.unidades.length) {
+        const fila = cuerpo.insertRow();
+        const c = fila.insertCell(); c.colSpan = 7; c.className = 'empty';
+        c.textContent = 'Ninguna unidad tiene lecturas en este periodo.';
+        return;
+      }
+      datos.unidades.forEach(u => {
+        const fila = cuerpo.insertRow();
+        const celdas = [
+          ['Ver', null], ['ID', u.id], ['Nombre', u.nombre],
+          ['Última', grados(u.ultima) + ' · ' + fecha(u.ultima_momento) + ' ' + hora(u.ultima_momento)],
+          ['Mínima', grados(u.min)], ['Máxima', grados(u.max)], ['Media', grados(u.media)],
+        ];
+        celdas.forEach(([etiqueta, texto]) => {
+          const c = fila.insertCell();
+          c.dataset.label = etiqueta;
+          if (texto !== null) c.textContent = texto;
+        });
+        const marca = document.createElement('input');
+        marca.type = 'checkbox';
+        marca.checked = elegidas.has(u.id);
+        marca.setAttribute('aria-label', 'Ver ' + u.nombre + ' en la gráfica');
+        marca.addEventListener('change', () => {
+          marca.checked ? elegidas.add(u.id) : elegidas.delete(u.id);
+          pintarMuestras(); dibujar();
+        });
+        const muestra = document.createElement('i');
+        muestra.className = 'temp-muestra';
+        fila.cells[0].append(marca, muestra);
+        fila._u = u;
+      });
+      pintarMuestras();
+    }
+
+    function pintarMuestras() {
+      [...cuerpo.rows].forEach(f => {
+        const m = f.querySelector('.temp-muestra');
+        if (m && f._u) m.style.background = elegidas.has(f._u.id) ? color(f._u) : 'transparent';
+      });
+    }
+
+    function elegir(modo) {
+      elegidas.clear();
+      const lista = modo === 'todas' ? datos.unidades
+                  : modo === 'calientes' ? datos.unidades.slice(0, 6) : [];
+      lista.forEach(u => elegidas.add(u.id));
+      [...cuerpo.rows].forEach(f => {
+        const c = f.querySelector('input'); if (c && f._u) c.checked = elegidas.has(f._u.id);
+      });
+      pintarMuestras(); dibujar();
+    }
+
+    async function cargar() {
+      estado.textContent = 'Cargando…';
+      try {
+        const r = await fetch(panel.dataset.url + '?rango=' + rango);
+        if (!r.ok) throw new Error(r.status);
+        const nuevos = await r.json();
+        const primeraVez = datos === null;
+        datos = nuevos;
+        if (primeraVez) datos.unidades.slice(0, 6).forEach(u => elegidas.add(u.id));
+      } catch (e) {
+        estado.textContent = 'No se pudieron leer las temperaturas (' + e.message + ').';
+        return;
+      }
+      tabla(); dibujar();
+    }
+
+    panel.querySelectorAll('.temp-rango').forEach(b => b.addEventListener('click', () => {
+      rango = b.dataset.rango;
+      panel.querySelectorAll('.temp-rango').forEach(o => o.classList.toggle('activo', o === b));
+      cargar();
+    }));
+    panel.querySelectorAll('.temp-sel').forEach(b =>
+      b.addEventListener('click', () => datos && elegir(b.dataset.sel)));
+
+    // Se carga al abrir la pestaña, no con la página: la mayoría de las
+    // visitas a una red no miran la temperatura.
+    function siVisible() {
+      if (!cargado && panel.classList.contains('active')) { cargado = true; cargar(); }
+    }
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', siVisible));
+    let espera;
+    window.addEventListener('resize', () => {
+      clearTimeout(espera);
+      espera = setTimeout(() => datos && panel.classList.contains('active') && dibujar(), 150);
+    });
+    siVisible();
+  })();
 </script>
 {% endblock %}
