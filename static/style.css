@@ -1420,10 +1420,10 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   .plano-nodo   { min-width: 34px; height: 30px; border-radius: 15px; font-size: 12px; }
 }
 
-/* ── Temperatura (gráfica del registro propio) ───────────────────────────── */
-.temp-barra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.temp-rangos, .temp-seleccion { display: flex; flex-wrap: wrap; gap: 6px; }
-.temp-rango, .temp-sel {
+/* ── Gráficas del registro propio (temperatura, potencia) ──────────────── */
+.serie-barra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.serie-rangos, .serie-seleccion { display: flex; flex-wrap: wrap; gap: 6px; }
+.serie-rango, .serie-sel {
   padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1432,16 +1432,16 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   font-size: 13px;
   cursor: pointer;
 }
-.temp-rango.activo { background: var(--blue); border-color: var(--blue); color: #fff; }
-.temp-sel { color: var(--blue); }
+.serie-rango.activo { background: var(--blue); border-color: var(--blue); color: #fff; }
+.serie-sel { color: var(--blue); }
 
-.temp-grafica { position: relative; }
-.temp-svg { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-.temp-rejilla { stroke: #e3ecf5; stroke-width: 1; }
-.temp-eje { font-size: 11px; fill: #778; }
-.temp-linea { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.temp-guia { stroke: #99a; stroke-width: 1; stroke-dasharray: 3 3; }
-.temp-globo {
+.serie-grafica { position: relative; }
+.serie-svg { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.serie-rejilla { stroke: #e3ecf5; stroke-width: 1; }
+.serie-eje { font-size: 11px; fill: #778; }
+.serie-linea { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.serie-guia { stroke: #99a; stroke-width: 1; stroke-dasharray: 3 3; }
+.serie-globo {
   position: absolute;
   top: 10px;
   z-index: 2;
@@ -1455,16 +1455,16 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   font-size: 12px;
   pointer-events: none;
 }
-.temp-globo b { display: block; margin-bottom: 4px; color: var(--navy); }
-.temp-globo i, .temp-muestra {
+.serie-globo b { display: block; margin-bottom: 4px; color: var(--navy); }
+.serie-globo i, .serie-muestra {
   display: inline-block;
   width: 10px; height: 10px;
   margin-right: 6px;
   border-radius: 2px;
   vertical-align: -1px;
 }
-.temp-muestra { margin-left: 8px; border: 1px solid var(--border); }
-#tbl-temperatura td:first-child { white-space: nowrap; }
+.serie-muestra { margin-left: 8px; border: 1px solid var(--border); }
+.serie-tabla td:first-child { white-space: nowrap; }
 
 /* Portada como monitoreo: lo que cambió desde la lectura anterior */
 .portada-cambios {

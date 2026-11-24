@@ -164,11 +164,42 @@ def test_con_lecturas_sale_la_pestana_y_su_json(cliente, monkeypatch, tmp_path):
     _con_temperaturas(monkeypatch, tmp_path, ahora)
     html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
     assert 'data-tab="temperatura"' in html
-    d = cliente.get(f"/network/{RED_ID}/temperaturas?rango=24h").get_json()
+    d = cliente.get(f"/network/{RED_ID}/serie/temperatura?rango=24h").get_json()
     assert [u["nombre"] for u in d["unidades"]] == ["Luminaria pasillo", "Pasarela"]
     assert d["unidades"][0]["max"] == 45.0
     assert d["desfase_min"] == -360
 
 
 def test_un_rango_inventado_es_un_400(cliente):
-    assert cliente.get(f"/network/{RED_ID}/temperaturas?rango=1y").status_code == 400
+    assert cliente.get(f"/network/{RED_ID}/serie/temperatura?rango=1y").status_code == 400
+
+
+def test_sin_lecturas_de_potencia_no_hay_pestana_de_potencia(cliente, monkeypatch,
+                                                             tmp_path):
+    import time
+    _con_temperaturas(monkeypatch, tmp_path, int(time.time() * 1000))
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="temperatura"' in html
+    assert 'data-tab="potencia"' not in html
+
+
+def test_con_lecturas_de_potencia_sale_su_pestana_y_su_serie(cliente, monkeypatch,
+                                                             tmp_path):
+    import time
+    ahora = int(time.time() * 1000)
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "registro.db")
+    conn = registro.abrir(tmp_path / "registro.db")
+    registro.guardar(conn, RED_ID, [(1, "Power", ahora - H, 120.0),
+                                    (1, "Power", ahora - H // 2, 180.0),
+                                    (1, "Voltage", ahora - H, 230.0)])
+    conn.close()
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="potencia"' in html and 'data-tab="temperatura"' not in html
+    assert 'data-unidad="W"' in html
+    d = cliente.get(f"/network/{RED_ID}/serie/potencia?rango=24h").get_json()
+    u = d["unidades"][0]
+    assert (u["min"], u["max"], u["ultima"]) == (120.0, 180.0, 180.0)
+
+
+def test_una_medida_sin_grafica_es_un_404(cliente):
+    assert cliente.get(f"/network/{RED_ID}/serie/tension").status_code == 404

@@ -96,9 +96,9 @@
     <span class="badge badge-alerta">{{ conexion.no_responden }} sin señal</span>
     {%- endif %}
   </button>
-  {%- if temperatura_desde %}
-  <button class="tab" data-tab="temperatura">Temperatura</button>
-  {%- endif %}
+  {%- for sr in series %}
+  <button class="tab" data-tab="{{ sr.clave }}">{{ sr.titulo }}</button>
+  {%- endfor %}
   <button class="tab" data-tab="luminarias">Luminarias <span class="badge">{{ luminarias|length }}</span></button>
   <button class="tab" data-tab="pulsadores">Pulsadores <span class="badge">{{ pulsadores|length }}</span></button>
   <button class="tab" data-tab="sensores">Sensores <span class="badge">{{ sensores|length }}</span></button>
@@ -244,27 +244,35 @@
   </div>
 </section>
 
-{% if temperatura_desde %}
-<!-- Temperatura: del registro propio del servidor, no de la nube -->
-<section class="tab-panel" id="panel-temperatura"
-         data-url="{{ url_for('temperaturas', network_id=network_id) }}">
-  <div class="temp-barra">
-    <div class="temp-rangos" role="group" aria-label="Periodo">
-      <button type="button" class="temp-rango" data-rango="24h">24 h</button>
-      <button type="button" class="temp-rango activo" data-rango="7d">7 días</button>
-      <button type="button" class="temp-rango" data-rango="30d">30 días</button>
-      <button type="button" class="temp-rango" data-rango="todo">Todo</button>
+{#- Lo que cambia de una medida a otra; la gráfica y la tabla son las mismas. #}
+{% set textos_serie = {
+  'temperatura': {'mayores': 'Las 6 más calientes',
+                  'nota': 'Es la temperatura del equipo, no la del ambiente, y sigue al nivel de regulación.'},
+  'potencia':    {'mayores': 'Las 6 de más consumo',
+                  'nota': 'Es la potencia que mide el propio módulo de medición (McWong PSC-WCM-450).'},
+} %}
+{% for sr in series %}
+<!-- {{ sr.titulo }}: del registro propio del servidor, no de la nube -->
+<section class="tab-panel panel-serie" id="panel-{{ sr.clave }}"
+         data-url="{{ url_for('serie_registro', network_id=network_id, clave=sr.clave) }}"
+         data-unidad="{{ sr.unidad }}" data-titulo="{{ sr.titulo }}">
+  <div class="serie-barra">
+    <div class="serie-rangos" role="group" aria-label="Periodo">
+      <button type="button" class="serie-rango" data-rango="24h">24 h</button>
+      <button type="button" class="serie-rango activo" data-rango="7d">7 días</button>
+      <button type="button" class="serie-rango" data-rango="30d">30 días</button>
+      <button type="button" class="serie-rango" data-rango="todo">Todo</button>
     </div>
-    <div class="temp-seleccion" role="group" aria-label="Unidades en la gráfica">
-      <button type="button" class="temp-sel" data-sel="calientes">Las 6 más calientes</button>
-      <button type="button" class="temp-sel" data-sel="todas">Todas</button>
-      <button type="button" class="temp-sel" data-sel="ninguna">Ninguna</button>
+    <div class="serie-seleccion" role="group" aria-label="Unidades en la gráfica">
+      <button type="button" class="serie-sel" data-sel="mayores">{{ textos_serie[sr.clave].mayores }}</button>
+      <button type="button" class="serie-sel" data-sel="todas">Todas</button>
+      <button type="button" class="serie-sel" data-sel="ninguna">Ninguna</button>
     </div>
   </div>
-  <div class="temp-grafica" id="temp-grafica" aria-live="polite"></div>
-  <p class="hint" id="temp-estado">Cargando…</p>
+  <div class="serie-grafica" aria-live="polite"></div>
+  <p class="hint serie-estado">Cargando…</p>
   <div class="table-wrap">
-    <table id="tbl-temperatura">
+    <table id="tbl-{{ sr.clave }}" class="serie-tabla">
       <thead><tr>
         <th>Ver</th><th>ID</th><th>Nombre</th><th>Última</th>
         <th>Mínima</th><th>Máxima</th><th>Media</th>
@@ -272,9 +280,9 @@
       <tbody></tbody>
     </table>
   </div>
-  <p class="hint">Registro desde el {{ temperatura_desde.strftime('%d/%m/%Y %H:%M') }}. Es la temperatura del equipo, no la del ambiente, y sigue al nivel de regulación. Cada punto es la media de su tramo; mínima, máxima y media salen de las lecturas sin promediar. Un hueco en la línea es un rato en que la nube no recibió lecturas, casi siempre porque el gateway no respondía.</p>
+  <p class="hint">Registro desde el {{ sr.desde.strftime('%d/%m/%Y %H:%M') }}. {{ textos_serie[sr.clave].nota }} Cada punto es la media de su tramo; mínima, máxima y media salen de las lecturas sin promediar. Un hueco en la línea es un rato en que la nube no recibió lecturas, casi siempre porque el gateway no respondía.</p>
 </section>
-{% endif %}
+{% endfor %}
 
 <!-- Luminarias -->
 <section class="tab-panel" id="panel-luminarias">
@@ -1572,14 +1580,14 @@
   });
 </script>
 <script nonce="{{ csp_nonce() }}">
-  // Gráfica de temperatura. SVG dibujado aquí y no una librería: la CSP no
-  // deja cargar scripts de fuera, y el .app no debe depender de internet.
-  (function () {
-    const panel = document.getElementById('panel-temperatura');
-    if (!panel) return;
-    const caja = document.getElementById('temp-grafica');
-    const estado = document.getElementById('temp-estado');
-    const cuerpo = document.querySelector('#tbl-temperatura tbody');
+  // Gráficas del registro (temperatura, potencia). SVG dibujado aquí y no una
+  // librería: la CSP no deja cargar scripts de fuera, y el .app no debe
+  // depender de internet. Una llamada por pestaña.
+  document.querySelectorAll('.panel-serie').forEach(function (panel) {
+    const caja = panel.querySelector('.serie-grafica');
+    const estado = panel.querySelector('.serie-estado');
+    const cuerpo = panel.querySelector('.serie-tabla tbody');
+    const unidad = panel.dataset.unidad;
     const NS = 'http://www.w3.org/2000/svg';
     const COLORES = ['#C00000', '#ED7D31', '#2E75B6', '#70AD47', '#7030A0',
                      '#00B0F0', '#1F3864', '#BF8F00', '#C55A9B', '#4D7F6B'];
@@ -1593,7 +1601,16 @@
     const dos = n => String(n).padStart(2, '0');
     const fecha = ms => { const d = local(ms); return dos(d.getUTCDate()) + '/' + dos(d.getUTCMonth() + 1); };
     const hora = ms => { const d = local(ms); return dos(d.getUTCHours()) + ':' + dos(d.getUTCMinutes()); };
-    const grados = v => (Math.round(v * 10) / 10).toLocaleString('es') + ' °C';
+    const valor = v => (Math.round(v * 10) / 10).toLocaleString('es') + ' ' + unidad;
+    const rotulo = v => unidad === '°C' ? v + '°' : v.toLocaleString('es') + ' ' + unidad;
+
+    // Divisiones redondas (1, 2 o 5 por potencia de diez) para cualquier
+    // escala: 30–65 °C y 0–450 W piden pasos muy distintos.
+    function pasoRedondo(rango) {
+      const bruto = rango / 5, p = Math.pow(10, Math.floor(Math.log10(bruto)));
+      const n = bruto / p;
+      return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
+    }
 
     function el(nombre, attrs, padre) {
       const e = document.createElementNS(NS, nombre);
@@ -1622,22 +1639,24 @@
       const t0 = datos.desde, t1 = datos.hasta;
       let lo = Infinity, hi = -Infinity;
       series.forEach(u => u.puntos.forEach(([, v]) => { lo = Math.min(lo, v); hi = Math.max(hi, v); }));
-      lo = Math.floor((lo - 1) / 5) * 5; hi = Math.ceil((hi + 1) / 5) * 5;
+      if (hi - lo < 2) { lo -= 1; hi += 1; }
+      const paso = pasoRedondo(hi - lo);
+      lo = Math.floor(lo / paso) * paso; hi = Math.ceil(hi / paso) * paso;
       const x = t => M.iz + (t - t0) / Math.max(1, t1 - t0) * (AN - M.iz - M.de);
       const y = v => AL - M.ab - (v - lo) / (hi - lo) * (AL - M.ar - M.ab);
 
-      const svg = el('svg', {viewBox: `0 0 ${AN} ${AL}`, class: 'temp-svg',
-                             role: 'img', 'aria-label': 'Temperatura por unidad'}, caja);
-      const paso = (hi - lo) > 30 ? 10 : 5;
-      for (let v = lo; v <= hi; v += paso) {
-        el('line', {x1: M.iz, x2: AN - M.de, y1: y(v), y2: y(v), class: 'temp-rejilla'}, svg);
-        el('text', {x: M.iz - 6, y: y(v) + 4, class: 'temp-eje', 'text-anchor': 'end'}, svg)
-          .textContent = v + '°';
+      const svg = el('svg', {viewBox: `0 0 ${AN} ${AL}`, class: 'serie-svg',
+                             role: 'img', 'aria-label': panel.dataset.titulo + ' por unidad'}, caja);
+      for (let i = 0; lo + i * paso <= hi + paso / 2; i++) {
+        const v = Math.round((lo + i * paso) * 1000) / 1000;
+        el('line', {x1: M.iz, x2: AN - M.de, y1: y(v), y2: y(v), class: 'serie-rejilla'}, svg);
+        el('text', {x: M.iz - 6, y: y(v) + 4, class: 'serie-eje', 'text-anchor': 'end'}, svg)
+          .textContent = rotulo(v);
       }
       const marcas = AN < 600 ? 3 : 6;
       for (let i = 0; i <= marcas; i++) {
         const t = t0 + (t1 - t0) * i / marcas;
-        el('text', {x: x(t), y: AL - 8, class: 'temp-eje',
+        el('text', {x: x(t), y: AL - 8, class: 'serie-eje',
                     'text-anchor': i === 0 ? 'start' : i === marcas ? 'end' : 'middle'}, svg)
           .textContent = (t1 - t0) <= 2 * 86400000 ? hora(t) : fecha(t);
       }
@@ -1650,16 +1669,16 @@
           d += (previo === null || t - previo > salto ? 'M' : 'L') + x(t).toFixed(1) + ' ' + y(v).toFixed(1) + ' ';
           previo = t;
         });
-        el('path', {d, class: 'temp-linea', stroke: color(u)}, svg);
+        el('path', {d, class: 'serie-linea', stroke: color(u)}, svg);
         if (u.puntos.length < 40) {
           u.puntos.forEach(([t, v]) => el('circle', {cx: x(t), cy: y(v), r: 3, fill: color(u)}, svg));
         }
       });
 
       // Al pasar el ratón: la hora más cercana y el valor de cada unidad.
-      const guia = el('line', {y1: M.ar, y2: AL - M.ab, class: 'temp-guia', visibility: 'hidden'}, svg);
+      const guia = el('line', {y1: M.ar, y2: AL - M.ab, class: 'serie-guia', visibility: 'hidden'}, svg);
       const globo = document.createElement('div');
-      globo.className = 'temp-globo'; globo.hidden = true; caja.appendChild(globo);
+      globo.className = 'serie-globo'; globo.hidden = true; caja.appendChild(globo);
       svg.addEventListener('mousemove', ev => {
         const r = svg.getBoundingClientRect();
         const t = t0 + ((ev.clientX - r.left) / r.width * AN - M.iz) / (AN - M.iz - M.de) * (t1 - t0);
@@ -1684,7 +1703,7 @@
           const linea = document.createElement('div');
           const muestra = document.createElement('i');
           muestra.style.background = color(u);
-          linea.append(muestra, u.nombre + ': ' + grados(v));
+          linea.append(muestra, u.nombre + ': ' + valor(v));
           globo.appendChild(linea);
         });
         globo.hidden = false;
@@ -1713,8 +1732,8 @@
         const fila = cuerpo.insertRow();
         const celdas = [
           ['Ver', null], ['ID', u.id], ['Nombre', u.nombre],
-          ['Última', grados(u.ultima) + ' · ' + fecha(u.ultima_momento) + ' ' + hora(u.ultima_momento)],
-          ['Mínima', grados(u.min)], ['Máxima', grados(u.max)], ['Media', grados(u.media)],
+          ['Última', valor(u.ultima) + ' · ' + fecha(u.ultima_momento) + ' ' + hora(u.ultima_momento)],
+          ['Mínima', valor(u.min)], ['Máxima', valor(u.max)], ['Media', valor(u.media)],
         ];
         celdas.forEach(([etiqueta, texto]) => {
           const c = fila.insertCell();
@@ -1730,7 +1749,7 @@
           pintarMuestras(); dibujar();
         });
         const muestra = document.createElement('i');
-        muestra.className = 'temp-muestra';
+        muestra.className = 'serie-muestra';
         fila.cells[0].append(marca, muestra);
         fila._u = u;
       });
@@ -1739,7 +1758,7 @@
 
     function pintarMuestras() {
       [...cuerpo.rows].forEach(f => {
-        const m = f.querySelector('.temp-muestra');
+        const m = f.querySelector('.serie-muestra');
         if (m && f._u) m.style.background = elegidas.has(f._u.id) ? color(f._u) : 'transparent';
       });
     }
@@ -1747,7 +1766,7 @@
     function elegir(modo) {
       elegidas.clear();
       const lista = modo === 'todas' ? datos.unidades
-                  : modo === 'calientes' ? datos.unidades.slice(0, 6) : [];
+                  : modo === 'mayores' ? datos.unidades.slice(0, 6) : [];
       lista.forEach(u => elegidas.add(u.id));
       [...cuerpo.rows].forEach(f => {
         const c = f.querySelector('input'); if (c && f._u) c.checked = elegidas.has(f._u.id);
@@ -1765,22 +1784,22 @@
         datos = nuevos;
         if (primeraVez) datos.unidades.slice(0, 6).forEach(u => elegidas.add(u.id));
       } catch (e) {
-        estado.textContent = 'No se pudieron leer las temperaturas (' + e.message + ').';
+        estado.textContent = 'No se pudieron leer las lecturas (' + e.message + ').';
         return;
       }
       tabla(); dibujar();
     }
 
-    panel.querySelectorAll('.temp-rango').forEach(b => b.addEventListener('click', () => {
+    panel.querySelectorAll('.serie-rango').forEach(b => b.addEventListener('click', () => {
       rango = b.dataset.rango;
-      panel.querySelectorAll('.temp-rango').forEach(o => o.classList.toggle('activo', o === b));
+      panel.querySelectorAll('.serie-rango').forEach(o => o.classList.toggle('activo', o === b));
       cargar();
     }));
-    panel.querySelectorAll('.temp-sel').forEach(b =>
+    panel.querySelectorAll('.serie-sel').forEach(b =>
       b.addEventListener('click', () => datos && elegir(b.dataset.sel)));
 
     // Se carga al abrir la pestaña, no con la página: la mayoría de las
-    // visitas a una red no miran la temperatura.
+    // visitas a una red no miran estas gráficas.
     function siVisible() {
       if (!cargado && panel.classList.contains('active')) { cargado = true; cargar(); }
     }
@@ -1791,6 +1810,6 @@
       espera = setTimeout(() => datos && panel.classList.contains('active') && dibujar(), 150);
     });
     siVisible();
-  })();
+  });
 </script>
 {% endblock %}

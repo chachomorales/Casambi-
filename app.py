@@ -734,27 +734,36 @@ def arrancar_registro() -> bool:
     return True
 
 
-# ── Gráfica de temperatura ───────────────────────────────────────────────────
-# Lee del registro propio (ver más arriba): la nube no guarda la temperatura.
+# ── Gráficas del registro: temperatura y potencia ────────────────────────────
+# Leen del registro propio (ver más arriba): la nube no guarda ninguna de las dos.
 
-RANGOS_TEMPERATURA = {"24h": 1, "7d": 7, "30d": 30, "todo": None}
+# Las medidas con pestaña de gráfica, en el orden en que salen las pestañas. La
+# clave va en la URL; la magnitud es el nombre que trae `sensors` en el estado.
+SERIES = {
+    "temperatura": {"magnitud": "Temperature", "titulo": "Temperatura", "unidad": "°C"},
+    "potencia":    {"magnitud": "Power",       "titulo": "Potencia",    "unidad": "W"},
+}
+RANGOS_SERIE = {"24h": 1, "7d": 7, "30d": 30, "todo": None}
 PUNTOS_GRAFICA = 200          # por unidad: más que eso no cabe en el ancho
 TRAMO_MINIMO = 15 * 60 * 1000  # la cadencia del registro; menos no aporta
 
 
-def _primera_temperatura(network_id: str) -> datetime | None:
-    """Desde cuándo hay temperaturas guardadas de la red, o None si no hay."""
+def _series_disponibles(network_id: str) -> list[dict]:
+    """Las medidas con lecturas guardadas de la red, y desde cuándo."""
     if not REGISTRO_DB.is_file():
-        return None
+        return []
     conn = registro.abrir(REGISTRO_DB)
     try:
-        momento = registro.primera_lectura(conn, network_id, "Temperature")
+        primeras = {clave: registro.primera_lectura(conn, network_id, s["magnitud"])
+                    for clave, s in SERIES.items()}
     finally:
         conn.close()
-    if momento is None:
-        return None
-    return datetime.fromtimestamp(momento / 1000, config.zona_horaria()).replace(
-        tzinfo=None)
+    return [
+        {"clave": clave, **SERIES[clave],
+         "desde": datetime.fromtimestamp(momento / 1000, config.zona_horaria())
+                  .replace(tzinfo=None)}
+        for clave, momento in primeras.items() if momento is not None
+    ]
 
 
 def _tramo(desde: int, hasta: int) -> int:
@@ -1735,17 +1744,20 @@ def network_view(network_id):
         error=_error_autenticacion(),
         current_id=str(network_id),
         cuentas=credentials.list_accounts(_HOME),
-        temperatura_desde=_primera_temperatura(network_id),
+        series=_series_disponibles(network_id),
         **ctx,
     )
 
 
-@app.route("/network/<network_id>/temperaturas")
+@app.route("/network/<network_id>/serie/<clave>")
 @require_network
-def temperaturas(network_id):
-    """Series de temperatura de la red para la gráfica, en JSON."""
+def serie_registro(network_id, clave):
+    """Las lecturas de una medida de la red para su gráfica, en JSON."""
+    if clave not in SERIES:
+        abort(404)
+    magnitud = SERIES[clave]["magnitud"]
     rango = request.args.get("rango", "7d")
-    if rango not in RANGOS_TEMPERATURA:
+    if rango not in RANGOS_SERIE:
         abort(400)
     hasta = int(time.time() * 1000)
     # Guatemala no cambia de hora, así que un desfase fijo basta para que el
@@ -1759,13 +1771,13 @@ def temperaturas(network_id):
 
     conn = registro.abrir(REGISTRO_DB)
     try:
-        primera = registro.primera_lectura(conn, network_id, "Temperature")
+        primera = registro.primera_lectura(conn, network_id, magnitud)
         if primera is None:
             return jsonify(vacio)
-        dias = RANGOS_TEMPERATURA[rango]
+        dias = RANGOS_SERIE[rango]
         desde = primera if dias is None else max(primera, hasta - dias * 86_400_000)
         tramo = _tramo(desde, hasta)
-        datos = registro.serie(conn, network_id, "Temperature", desde, tramo)
+        datos = registro.serie(conn, network_id, magnitud, desde, tramo)
     finally:
         conn.close()
 
