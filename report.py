@@ -1028,6 +1028,95 @@ def historial_conexion(network: dict, state: dict, registro: dict | None,
     }
 
 
+# ── Resumen de todas las redes (portada) ─────────────────────────────────────
+# La portada no descarga modelos: con configuración, estado y una semana de log
+# basta, y así las 46 redes se leen en unos 15 s en vez de minutos.
+
+DIAS_RESUMEN = 7
+
+# Umbrales de la lista «Necesita atención». Un solo corte en una semana es
+# normal —un reinicio del router, un corte de luz—; dos ya forman un patrón.
+# Las caídas parciales sueltas son malla que respira: se avisa cuando son
+# tantas que un equipo entra y sale sin parar (LANCO llegó a 652 en 7 días).
+MIN_CORTES_RED_AVISO = 2
+MIN_CORTES_RED_FALLO = 5
+MIN_CAIDAS_PARCIALES = 20
+PROPORCION_SIN_SENAL_FALLO = 0.1
+
+
+def resumen_red(network: dict, state: dict, registro: dict | None,
+                ahora: datetime | None = None) -> dict:
+    """
+    Las cifras de una red que enseña la portada.
+
+    Reutiliza diagnostico_conectividad() e historial_conexion() para que la
+    portada y la pestaña Conectividad no puedan contar cosas distintas: aquí
+    solo se recorta el historial a la última semana.
+    """
+    ahora = ahora or config.ahora()
+    diag = diagnostico_conectividad(network, state)
+    hist = historial_conexion(network, state, registro, ahora)
+    desde = ahora - timedelta(days=DIAS_RESUMEN)
+    cortes = [c for c in hist.get("cortes", []) if c["inicio"] >= desde]
+    de_red = [c for c in cortes if c["alcance"] == "red"]
+    return {
+        "nivel":            diag["nivel"],
+        "gateway":          diag["gateway"],
+        # Un CGW-1 es fijo y debería estar siempre encendido; un móvil o una
+        # tableta como gateway se apagan o se van con su dueño, y verlos sin
+        # responder es lo normal, no una avería.
+        "gateway_fijo":     diag["gateway"].upper().startswith("CGW"),
+        "total":            diag["total"],
+        "responden":        diag["responden"],
+        "no_responden":     diag["no_responden"],
+        "con_aviso":        diag["con_aviso"],
+        "historial":        hist["estado"],
+        "cortes_red":       len(de_red),
+        "caidas_parciales": len(cortes) - len(de_red),
+        "red_caida":        _duracion(sum(c["segundos"] or 0 for c in de_red)),
+    }
+
+
+def avisos_portada(redes: list[dict]) -> list[dict]:
+    """
+    Lo que pide atención, una entrada por red y lo más grave primero.
+
+    `redes` son filas con `id`, `nombre` y el resumen_red() de cada una. Una red
+    sin gateway o con un móvil apagado como pasarela no entra: son 36 de 46 y
+    taparían lo que sí se puede atender. Ya cuentan en las cifras de arriba.
+    """
+    avisos = []
+    for r in redes:
+        if r["nivel"] == "error":
+            continue
+        partes, detalles, grave = [], [], False
+        if r["nivel"] == "online" and r["no_responden"]:
+            leidos = r["responden"] + r["no_responden"]
+            partes.append(f"{r['no_responden']} de {leidos} equipos sin señal")
+            grave |= r["no_responden"] / leidos >= PROPORCION_SIN_SENAL_FALLO
+        if r["con_aviso"]:
+            partes.append(f"{r['con_aviso']} con aviso de estado")
+        if r["cortes_red"] >= MIN_CORTES_RED_AVISO:
+            partes.append(f"{r['cortes_red']} cortes de toda la red en "
+                          f"{DIAS_RESUMEN} días, {r['red_caida']} sin conexión")
+            detalles.append("Gateway o energía")
+            grave |= r["cortes_red"] >= MIN_CORTES_RED_FALLO
+        if r["caidas_parciales"] >= MIN_CAIDAS_PARCIALES:
+            partes.append(f"{r['caidas_parciales']} caídas parciales en "
+                          f"{DIAS_RESUMEN} días")
+            detalles.append("Equipos que entran y salen de la malla")
+        if r["nivel"] == "gateway-offline" and r["gateway_fijo"]:
+            partes.append(f"el gateway {r['gateway']} no responde")
+        if partes:
+            avisos.append({
+                "id": r["id"], "nombre": r["nombre"], "grave": grave,
+                "texto": " · ".join(partes), "detalle": " · ".join(detalles),
+                "peso": (grave, r["no_responden"] + r["cortes_red"]),
+            })
+    avisos.sort(key=lambda a: a["peso"], reverse=True)
+    return avisos
+
+
 def _tabla_historial(ws, fila: int, historial: dict) -> None:
     """Los cortes bajo la lista de dispositivos de la hoja Conectividad."""
     ws.merge_cells(f"A{fila}:K{fila}")

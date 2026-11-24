@@ -234,6 +234,15 @@ def app_cargada(credenciales, datos_limpios):
             "fetched_at": datetime(2026, 9, 18, 12, 0, 0),
         }},
         "error": None,
+        # La portada ya leída: si no, cada GET / lanzaría la carga del resumen.
+        "resumen": {
+            "redes": [{"id": RED_ID, "nombre": META_RED["name"],
+                       "sitio": META_RED["site_name"],
+                       **app_module.resumen_red(
+                           NETWORK, STATE, {"puntos": [], "truncado": False})}],
+            "leido_en": datetime(2026, 9, 18, 12, 0, 0),
+            "momento": app_module.time.monotonic(),
+        },
     })
     app_module._tasks.clear()
     app_module._task_por_clave.clear()
@@ -244,7 +253,7 @@ def app_cargada(credenciales, datos_limpios):
     app_module.app.cliente_api_falso = cliente_api
     yield app_module.app
     app_module._state.update({"clients": {}, "networks": None,
-                              "cache": {}, "error": None})
+                              "cache": {}, "error": None, "resumen": None})
 
 
 @pytest.fixture
@@ -261,7 +270,7 @@ def app_sin_cargar(credenciales, datos_limpios):
     verdad a Casambi Cloud.
     """
     app_module._state.update({"clients": {}, "networks": None,
-                              "cache": {}, "error": None})
+                              "cache": {}, "error": None, "resumen": None})
     app_module._tasks.clear()
     app_module._task_por_clave.clear()
     app_module._tasks["tarea-de-prueba"] = {

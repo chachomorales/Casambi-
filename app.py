@@ -23,6 +23,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -57,6 +58,9 @@ from report import (
     columnas_lectura,
     diagnostico_conectividad,
     historial_conexion,
+    avisos_portada,
+    resumen_red,
+    DIAS_RESUMEN,
     TEXTO_SIN_HISTORIAL,
     lectura_sensor,
     medida_electrica,
@@ -163,6 +167,7 @@ _state: dict = {
     "networks": None,      # redes de todas las cuentas (None = sin cargar aún)
     "cache": {},           # network_id → {network, state, fixtures, fetched_at}
     "error": None,         # errores de autenticación, por cuenta
+    "resumen": None,       # portada: {redes, leido_en, momento} (None = sin leer)
 }
 _state_lock = threading.RLock()
 
@@ -449,6 +454,7 @@ def _fetch_network_data(network_id: str, progress=None) -> dict:
     }
     with _state_lock:
         _state["cache"][str(network_id)] = data
+    _actualizar_fila_resumen(network_id, network, state, registro)
     return data
 
 
@@ -463,6 +469,117 @@ def _get_network_data(network_id: str, force: bool = False) -> dict:
         if cacheado is not None:
             return cacheado
     return _fetch_network_data(network_id)
+
+
+# ── Portada: resumen de todas las redes ──────────────────────────────────────
+# Se lee aparte de la caché de cada red porque no descarga modelos, que es lo
+# lento: configuración, estado y una semana de log de las 46 redes tardan unos
+# 15 s con ocho consultas a la vez. Caduca a la media hora para que nadie tome
+# por actual el estado de la mañana.
+
+HILOS_RESUMEN = 8
+VIDA_RESUMEN = 30 * 60
+
+# Orden de la tabla: primero lo que se ve desde la nube, que es lo atendible.
+_ORDEN_NIVEL = {"online": 0, "gateway-offline": 1, "sin-gateway": 2,
+                "sin-dispositivos": 3, "error": 4}
+
+
+def _clave_fila_resumen(fila: dict) -> tuple:
+    return (_ORDEN_NIVEL.get(fila["nivel"], 9),
+            -(fila["no_responden"] + fila["cortes_red"]),
+            _clave_natural(fila["nombre"]))
+
+
+def _resumir_red(meta: dict) -> dict:
+    """Una fila de la portada. Un fallo de esa red no tumba las demás."""
+    red = str(meta.get("id"))
+    fila = {"id": red, "nombre": meta.get("name") or "Sin nombre",
+            "sitio": meta.get("site_name") or ""}
+    with _state_lock:
+        client = _state["clients"].get(meta.get("account_id"))
+    try:
+        if client is None:
+            raise CasambiAPIError("La red no pertenece a ninguna cuenta configurada.")
+        network = client.get_network(red)
+        state = client.get_network_state(red)
+    except Exception as e:
+        return {**fila, **resumen_red({}, {}, None), "nivel": "error",
+                "error": str(e)}
+    # Como en la red: sin historial la fila sigue valiendo.
+    try:
+        registro = client.get_datapoints(red, keys="online", dias=DIAS_RESUMEN)
+    except Exception:
+        registro = None
+    return {**fila, **resumen_red(network, state, registro)}
+
+
+def _cargar_resumen(progress=None) -> None:
+    redes = _get_networks()
+    filas = []
+    # Con el total desde el principio, la barra no pasa de «indeterminada» a
+    # llena y luego retrocede al llegar la primera red.
+    if progress:
+        progress("Leyendo las redes…", 0, len(redes))
+    with ThreadPoolExecutor(max_workers=HILOS_RESUMEN) as pool:
+        pendientes = [pool.submit(_resumir_red, meta) for meta in redes]
+        for hechas, futuro in enumerate(as_completed(pendientes), 1):
+            fila = futuro.result()
+            filas.append(fila)
+            if progress:
+                progress(f"Leída {fila['nombre']} ({hechas} de {len(redes)})…",
+                         hechas, len(redes))
+    filas.sort(key=_clave_fila_resumen)
+    with _state_lock:
+        _state["resumen"] = {"redes": filas, "leido_en": config.ahora(),
+                             "momento": time.monotonic()}
+
+
+def _resumen_vigente() -> dict | None:
+    with _state_lock:
+        resumen = _state["resumen"]
+    if resumen is None or time.monotonic() - resumen["momento"] > VIDA_RESUMEN:
+        return None
+    return resumen
+
+
+def _actualizar_fila_resumen(network_id: str, network: dict, state: dict,
+                             registro: dict | None) -> None:
+    """
+    Al descargar una red entera, su fila de la portada se pone al día.
+
+    Así quien vuelve a la portada tras revisar una red no la ve con el estado
+    de antes. No cambia la hora de lectura del resumen: las demás filas siguen
+    siendo de entonces.
+    """
+    with _state_lock:
+        resumen = _state["resumen"]
+        if resumen is None:
+            return
+        for i, fila in enumerate(resumen["redes"]):
+            if fila["id"] == str(network_id):
+                resumen["redes"][i] = {
+                    "id": fila["id"], "nombre": fila["nombre"],
+                    "sitio": fila["sitio"],
+                    **resumen_red(network, state, registro),
+                }
+                resumen["redes"].sort(key=_clave_fila_resumen)
+                return
+
+
+def _cifras_portada(redes: list[dict]) -> dict:
+    visibles = [r for r in redes if r["nivel"] == "online"]
+    return {
+        "redes":          len(redes),
+        "equipos":        sum(r["total"] for r in redes),
+        "visibles":       len(visibles),
+        "con_lectura":    sum(r["total"] for r in visibles),
+        "gateway_caido":  sum(1 for r in redes if r["nivel"] == "gateway-offline"),
+        "sin_gateway":    sum(1 for r in redes if r["nivel"] == "sin-gateway"),
+        "sin_senal":      sum(r["no_responden"] for r in visibles),
+        "cortes_red":     sum(r["cortes_red"] for r in redes),
+        "con_error":      sum(1 for r in redes if r["nivel"] == "error"),
+    }
 
 
 # ── Imágenes de la red (galería y fotos de elementos) ────────────────────────
@@ -1226,13 +1343,31 @@ def index():
         return _pantalla_carga("Conectando con Casambi Cloud", url_for("index"),
                                tarea)
 
+    resumen = _resumen_vigente()
+    if resumen is None:
+        tarea = _start_loading("resumen", _cargar_resumen)
+        return _pantalla_carga("Leyendo el estado de las redes",
+                               url_for("index"), tarea)
+
     return render_template(
         "index.html",
         networks=_get_networks(),
         error=_error_autenticacion(),
         current_id=None,
         cuentas=credentials.list_accounts(_HOME),
+        resumen=resumen,
+        cifras=_cifras_portada(resumen["redes"]),
+        avisos=avisos_portada(resumen["redes"]),
+        dias_resumen=DIAS_RESUMEN,
     )
+
+
+@app.route("/resumen/refresh", methods=["POST"])
+def resumen_refresh():
+    """Vuelve a leer todas las redes. POST por lo mismo que networks_refresh."""
+    with _state_lock:
+        _state["resumen"] = None
+    return redirect(url_for("index"))
 
 
 @app.route("/redes/refresh", methods=["POST"])
@@ -1249,6 +1384,7 @@ def networks_refresh():
     """
     with _state_lock:
         _state["networks"] = None
+        _state["resumen"] = None
     return redirect(url_for("index"))
 
 
@@ -1284,7 +1420,7 @@ def _reset_session() -> None:
     """Olvida las sesiones y la caché tras cambiar de cuentas."""
     with _state_lock:
         _state.update({"clients": {}, "networks": None, "cache": {},
-                       "error": None})
+                       "error": None, "resumen": None})
 
 
 # ── Ajustes: cuentas de Casambi ───────────────────────────────────────────────

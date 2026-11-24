@@ -1,22 +1,121 @@
 {% extends "base.html" %}
 {% block title %}Informes Casambi — Inicio{% endblock %}
 
-{% block content %}
-<div class="hero">
-  <h1>Informe de Red Casambi</h1>
-  <p>Selecciona una red del menú lateral para ver su informe completo:
-     resumen, dispositivos, luminarias, sensores, pulsadores, grupos y escenas.</p>
+{% macro miles(n) %}{{ "{:,}".format(n).replace(",", ".") }}{% endmacro %}
 
-  {% if networks %}
-  <div class="net-cards">
-    {% for net in networks %}
-      <a href="{{ url_for('network_view', network_id=net.id) }}" class="net-card">
-        <div class="net-card-name">{{ net.name or 'Sin nombre' }}</div>
-        {% if net.site_name %}<div class="net-card-site">{{ net.site_name }}</div>{% endif %}
-        <div class="net-card-id">ID: {{ net.id }}</div>
-      </a>
-    {% endfor %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Redes Casambi</h1>
+    <div class="page-meta">
+      <span title="{{ resumen.leido_en.strftime('%d/%m/%Y %H:%M') }}">Leído a las {{ resumen.leido_en.strftime('%H:%M') }} · {{ resumen.leido_en|hace }}</span>
+    </div>
   </div>
-  {% endif %}
+  <div class="page-actions">
+    <form method="post" action="{{ url_for('resumen_refresh') }}" class="accion-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-outline">Actualizar</button>
+    </form>
+  </div>
 </div>
+
+{% if resumen.redes %}
+<div class="cards">
+  <div class="card card-total">
+    <div class="card-num">{{ cifras.redes }}</div>
+    <div class="card-label">Redes</div>
+    <div class="card-sub">{{ miles(cifras.equipos) }} equipos</div>
+  </div>
+  <div class="card card-sensor">
+    <div class="card-num">{{ cifras.visibles }}</div>
+    <div class="card-label">Visibles desde la nube</div>
+    <div class="card-sub">{{ miles(cifras.con_lectura) }} equipos con lectura</div>
+  </div>
+  <div class="card card-button">
+    <div class="card-num">{{ cifras.gateway_caido }}</div>
+    <div class="card-label">Gateway sin responder</div>
+    <div class="card-sub">{{ cifras.sin_gateway }} redes sin gateway</div>
+  </div>
+  <div class="card card-fallo">
+    <div class="card-num">{{ cifras.sin_senal }}</div>
+    <div class="card-label">Equipos sin señal</div>
+    <div class="card-sub">en redes que sí responden</div>
+  </div>
+</div>
+
+<h2 class="portada-titulo">Necesita atención</h2>
+{% if avisos %}
+<ul class="portada-avisos">
+  {% for a in avisos %}
+  <li>
+    <a href="{{ url_for('network_view', network_id=a.id) }}" class="aviso-red {{ 'aviso-red-fallo' if a.grave else 'aviso-red-aviso' }}">
+      <span class="aviso-red-nombre">{{ a.nombre }}</span>
+      <span class="aviso-red-texto">{{ a.texto }}</span>
+      {% if a.detalle %}<span class="aviso-red-detalle">{{ a.detalle }}</span>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="hint">Nada que atender en las redes que se ven desde la nube.</p>
+{% endif %}
+{% if cifras.con_error %}<p class="hint">{{ cifras.con_error }} {{ 'red no se pudo' if cifras.con_error == 1 else 'redes no se pudieron' }} leer; están al final de la tabla.</p>{% endif %}
+
+<h2 class="portada-titulo">Redes</h2>
+<input type="search" class="table-search" placeholder="Buscar red, sitio o gateway…" data-target="tbl-redes">
+<div class="table-wrap">
+  <table id="tbl-redes">
+    <thead><tr>
+      <th>Red</th><th>Estado</th><th>Gateway</th><th class="num">Equipos</th>
+      <th class="num">Sin señal</th><th class="num">Cortes de red ({{ dias_resumen }} d)</th>
+      <th class="num">Caídas parciales ({{ dias_resumen }} d)</th>
+    </tr></thead>
+    <tbody>
+      {% for r in resumen.redes %}
+      <tr>
+        <td data-label="Red"><a href="{{ url_for('network_view', network_id=r.id) }}" class="portada-red">{{ r.nombre }}</a>{% if r.sitio %}<span class="portada-sitio">{{ r.sitio }}</span>{% endif %}</td>
+        <td data-label="Estado">
+          {%- if r.nivel == 'online' %}<span class="estado estado-responde">En línea</span>
+          {%- elif r.nivel == 'gateway-offline' %}<span class="estado estado-aviso">Gateway caído</span>
+          {%- elif r.nivel == 'sin-gateway' %}<span class="estado estado-sin-lectura">Sin gateway</span>
+          {%- elif r.nivel == 'sin-dispositivos' %}<span class="estado estado-sin-lectura">Vacía</span>
+          {%- else %}<span class="estado estado-no-responde" title="{{ r.error }}">No se pudo leer</span>{% endif -%}
+        </td>
+        <td data-label="Gateway">{{ r.gateway or '—' }}</td>
+        <td data-label="Equipos" class="num">{{ miles(r.total) }}</td>
+        <td data-label="Sin señal" class="num">
+          {%- if r.nivel != 'online' %}<span class="portada-nulo">—</span>
+          {%- elif r.no_responden %}<span class="portada-mal">{{ r.no_responden }}</span>
+          {%- else %}0{% endif -%}
+        </td>
+        {%- if r.historial == 'ok' %}
+        <td data-label="Cortes de red" class="num" title="{{ r.red_caida }} sin conexión">{% if r.cortes_red %}<span class="portada-mal">{{ r.cortes_red }}</span>{% else %}0{% endif %}</td>
+        <td data-label="Caídas parciales" class="num">{{ r.caidas_parciales }}</td>
+        {%- else %}
+        <td data-label="Cortes de red" class="num"><span class="portada-nulo">{{ 'sin log' if r.historial == 'vacio' else '—' }}</span></td>
+        <td data-label="Caídas parciales" class="num"><span class="portada-nulo">{{ 'sin log' if r.historial == 'vacio' else '—' }}</span></td>
+        {%- endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="hint">«Sin señal» solo se cuenta donde el gateway responde: si no, la nube no sabe qué equipos funcionan. Los cortes salen del registro de conexión, que exige un gateway con «Usage of devices»; las redes sin él dicen «sin log».</p>
+{% else %}
+<p class="hint">No hay redes en las cuentas configuradas.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+  document.querySelectorAll('.table-search').forEach(input => {
+    const table = document.getElementById(input.dataset.target);
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase();
+      [...table.tBodies[0].rows].forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+  });
+</script>
 {% endblock %}

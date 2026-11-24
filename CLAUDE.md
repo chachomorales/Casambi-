@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 301 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 318 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 265:
+# propósito para que PyInstaller no las meta en el .app. Los otros 282:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 301 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 318 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -187,6 +187,31 @@ saber al tocar el código:
    Los modelos (`/v1/fixtures/{id}`, una petición por modelo distinto) son la parte
    lenta: por eso todo el flujo lleva callbacks de progreso hasta `cargando.html`.
 4. `generate_report()` mezcla los datos de la API con lo anotado por el usuario.
+
+## La portada: resumen de todas las redes
+
+`index()` ya no es una lista de tarjetas: tras autenticar lee **todas** las redes
+(`_cargar_resumen`, ocho a la vez) y enseña cifras globales, «Necesita atención»
+y una tabla por red. Solo pide configuración, estado y 7 días de log, sin los
+modelos, que es lo lento: las 46 redes tardan ~15 s. El resultado vive en
+`_state["resumen"]`, caduca a los 30 min (`VIDA_RESUMEN`) y se rehace con
+Actualizar (`/resumen/refresh`) o con el ↻ de las redes. Al abrir una red, su
+fila se pone al día con lo descargado (`_actualizar_fila_resumen`).
+
+Las cifras salen de `report.resumen_red()`, que reutiliza
+`diagnostico_conectividad()` e `historial_conexion()`: la portada y la pestaña
+Conectividad no pueden contar cosas distintas. Lo que se vio en el barrido del
+2026-11-24 y explica el diseño:
+
+- **Desde la nube solo se ven 8 de 46 redes.** 22 no tienen gateway y 14 lo tienen
+  pero no responde. Por eso la cifra es «Visibles desde la nube», y «Sin señal»
+  solo suma redes que responden: si no, acusaría a 1.480 equipos que no se ven.
+- **`avisos_portada()` deja fuera las redes sin gateway o con un móvil como
+  pasarela**: son la mayoría y apagarse es lo suyo. Sí avisa de un **CGW-1** sin
+  responder (`gateway_fijo`), que es fijo y debería estar siempre encendido.
+- Umbrales: un corte de red suelto no avisa (`MIN_CORTES_RED_AVISO = 2`), ≥5 es
+  grave; ≥20 caídas parciales en la semana es un equipo que entra y sale (LANCO
+  llegó a 639); ≥10 % de equipos sin señal es grave. Una red por aviso.
 
 ## Lo que la API no da, y el usuario anota
 
