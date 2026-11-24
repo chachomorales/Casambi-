@@ -40,12 +40,12 @@
       <span class="nav-menu-texto">Redes</span>
       {% if networks %}<span class="badge">{{ networks|length }}</span>{% endif %}
     </label>
-    <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="topbar-logo">
+    <a href="{{ url_for('index') }}" class="topbar-inicio" title="Resumen de redes"><img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa — inicio" class="topbar-logo"></a>
   </header>
 
   <aside class="sidebar">
     <div class="sidebar-brand">
-      <img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa" class="brand-logo">
+      <a href="{{ url_for('index') }}" title="Resumen de redes"><img src="{{ url_for('logos', filename='impelsa_logo.png') }}" alt="Impelsa — inicio" class="brand-logo"></a>
     </div>
 
     <div class="sidebar-section">
@@ -58,6 +58,12 @@
       </form>
     </div>
     <nav class="sidebar-nav">
+      {# El logo también lleva a la portada, pero eso no lo adivina nadie. #}
+      <a href="{{ url_for('index') }}"
+         class="net-link net-link-inicio {% if request.endpoint == 'index' %}active{% endif %}">
+        <span class="net-inicio-icono" aria-hidden="true">⌂</span>
+        <span class="net-name">Resumen de redes</span>
+      </a>
       {% if networks %}
         {% for net in networks %}
           <a href="{{ url_for('network_view', network_id=net.id) }}"

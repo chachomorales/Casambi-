@@ -55,6 +55,7 @@ body {
   top: 0;
   z-index: 30;
 }
+.topbar-inicio { display: flex; }
 .topbar-logo { max-width: 120px; height: auto; }
 
 /* Con las rayas solas no se adivinaba que detrás estaba la lista de redes, así
@@ -192,6 +193,10 @@ body {
 }
 .net-link.active .net-name small { color: #cfe3f8; }
 
+/* Vuelta a la portada: primera entrada de la lista, separada de las redes */
+.net-link-inicio { border-bottom: 1px solid rgba(255,255,255,.12); }
+.net-inicio-icono { width: 8px; text-align: center; font-size: 15px; line-height: 1; }
+
 .sidebar-empty { padding: 10px 16px; font-size: 13px; color: #9db8dc; }
 
 .sidebar-footer { padding: 16px; text-align: center; }
@@ -253,6 +258,14 @@ body {
 .portada-nulo  { color: #99a; }
 
 /* Page header */
+.volver-portada {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--blue);
+  text-decoration: none;
+}
+.volver-portada:hover { text-decoration: underline; }
 .page-header {
   display: flex;
   justify-content: space-between;

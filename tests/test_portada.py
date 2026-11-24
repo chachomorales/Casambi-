@@ -176,3 +176,9 @@ def test_abrir_una_red_pone_al_dia_su_fila(app_cargada):
     app_module._state["resumen"]["redes"][0]["nivel"] = "gateway-offline"
     app_module._fetch_network_data(RED_ID)
     assert app_module._state["resumen"]["redes"][0]["nivel"] == "online"
+
+
+def test_desde_una_red_se_vuelve_a_la_portada(cliente):
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'class="volver-portada"' in html
+    assert "Resumen de redes" in html

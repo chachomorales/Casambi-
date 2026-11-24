@@ -21,6 +21,7 @@
 {%- endmacro %}
 <header class="page-header">
   <div>
+    <a href="{{ url_for('index') }}" class="volver-portada">← Todas las redes</a>
     <h1>{{ network.name or 'Red sin nombre' }}</h1>
     <div class="page-meta">
       {% if network.site_name %}<span>Site: <b>{{ network.site_name }}</b></span>{% endif %}
