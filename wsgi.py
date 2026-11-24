@@ -40,3 +40,16 @@ from app import app as application  # noqa: E402
 application.wsgi_app = ProxyFix(
     application.wsgi_app, x_for=1, x_proto=1, x_host=1
 )
+
+# Las lecturas de temperatura y potencia se guardan desde el arranque, no desde
+# la primera visita: un fin de semana sin nadie abriendo la web no debe dejar
+# un hueco en las gráficas.
+from app import arrancar_registro  # noqa: E402
+import logging  # noqa: E402
+
+# Flask solo enseña de WARNING para arriba fuera de modo debug, y la línea de
+# cada pasada del registro es la manera de ver en `docker compose logs` que
+# sigue guardando.
+application.logger.setLevel(logging.INFO)
+
+arrancar_registro()

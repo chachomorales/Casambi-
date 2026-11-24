@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 318 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 327 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 282:
+# propósito para que PyInstaller no las meta en el .app. Los otros 291:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,11 +168,12 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 318 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 327 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
 | `report.py` | Excel con openpyxl: 12 hojas, portada con tarjetas, planos compuestos con Pillow. También `diagnostico_conectividad()`, que usan la hoja Conectividad y la interfaz |
+| `registro.py` | Registro propio de temperatura y medidas eléctricas en SQLite (`data/registro.db`), para graficarlas |
 | `credentials.py` | Cuentas múltiples en el Llavero de macOS vía `/usr/bin/security` |
 | `cobertura.py` | Importa proyectos `.casambi` del Simulador de Cobertura: plano, nodos y paredes |
 | `templates/`, `static/` | Interfaz: `network.html` (9 pestañas) es el grueso |
@@ -212,6 +213,28 @@ Conectividad no pueden contar cosas distintas. Lo que se vio en el barrido del
 - Umbrales: un corte de red suelto no avisa (`MIN_CORTES_RED_AVISO = 2`), ≥5 es
   grave; ≥20 caídas parciales en la semana es un equipo que entra y sale (LANCO
   llegó a 639); ≥10 % de equipos sin señal es grave. Una red por aviso.
+
+## El registro de temperatura y potencia
+
+Desde el 2026-11-24 el servidor guarda cada lectura de `sensors` del estado
+(`Temperature`, y `Voltage`, `Current`, `Power`, `Energy` de los McWong) en
+`data/registro.db`, para poder graficar meses. La nube no sirve para eso: el
+estado solo da la última lectura y el data logging guarda 60 días y, en las redes
+reales, ni temperatura ni potencia. Lo lleva un hilo del propio proceso
+(`arrancar_registro()`, llamado desde `wsgi.py`), así que **solo corre en el
+servidor**: el `.app` dejaría huecos de días. `CASAMBI_REGISTRO=1` lo fuerza en el
+escritorio.
+
+- **Se guarda la hora de la lectura**, no la de la consulta, con clave primaria
+  sobre ella: una lectura que la nube repite no se guarda dos veces, y una red
+  sin gateway no rellena la gráfica con un valor plano que no llegó.
+- Cada 15 min solo se consultan las redes que tienen algo que medir; la lista se
+  rehace cada 6 h. La primera pasada (46 redes) tarda ~25 s; las demás, ~2 s.
+- Primera pasada real: 87 temperaturas de 5 redes (las dos MM, Lomas, cielito y
+  San Martín), de 29 a 62 °C. **Ninguna medida eléctrica**: los McWong están en
+  el Lab y en Aseguradora General N1, que no tenían gateway en línea. Entrarán
+  solos cuando lo tengan.
+- Si fallan todas las redes de una pasada, se rehace la sesión en la siguiente.
 
 ## Lo que la API no da, y el usuario anota
 

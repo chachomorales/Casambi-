@@ -190,6 +190,13 @@ la que se fechan la bitácora y los informes. El reloj del servidor puede seguir
 en UTC o en la hora de Alemania —la app no lo mira—, pero si algún día el equipo
 trabaja desde otro país, esta es la variable que hay que cambiar.
 
+El registro de temperatura y medidas eléctricas viene encendido en el servidor
+y no necesita nada. Sus tres variables son opcionales: `CASAMBI_REGISTRO=0` lo
+apaga, `CASAMBI_REGISTRO_MINUTOS` cambia la cadencia (15 por defecto, 5 como
+mínimo) y `CASAMBI_REGISTRO_DIAS` lo que se conserva (400). Guarda en
+`/data/data/registro.db`, que entra en la copia diaria con el resto del volumen;
+cada pasada deja una línea `Registro: …` en `docker compose logs casambi`.
+
 ### 3. Cloudflare
 
 **El dominio de la app y el de las identidades son independientes.** La app vive

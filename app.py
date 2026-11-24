@@ -47,6 +47,7 @@ import auth
 import cobertura
 import config
 import credentials
+import registro
 from casambi_api import CasambiAPIError, CasambiClient
 from report import (
     _classify_unit,
@@ -580,6 +581,96 @@ def _cifras_portada(redes: list[dict]) -> dict:
         "cortes_red":     sum(r["cortes_red"] for r in redes),
         "con_error":      sum(1 for r in redes if r["nivel"] == "error"),
     }
+
+
+# ── Registro de temperatura y medidas eléctricas ─────────────────────────────
+# Un hilo del propio proceso: con un solo worker no hace falta otro servicio, y
+# comparte las sesiones de Casambi en vez de abrir otras (la nube responde 429
+# si se inician muchas seguidas). Solo se consulta cada pocos minutos el estado
+# de las redes que tienen algo que medir; la lista se rehace cada 6 h por si
+# aparece una unidad nueva o una red que estaba sin gateway vuelve a subir datos.
+
+REGISTRO_DB = DATA_DIR / "registro.db"
+REGISTRO_REBUSCAR = 6 * 3600
+HILOS_REGISTRO = 4
+
+_registro_estado = {"redes": None, "buscado": 0.0, "purgado": 0.0,
+                    "hilo": None}
+
+
+def _leer_lecturas(meta: dict) -> tuple[str, list | None]:
+    red = str(meta.get("id"))
+    with _state_lock:
+        client = _state["clients"].get(meta.get("account_id"))
+    if client is None:
+        return red, None
+    try:
+        return red, registro.extraer(client.get_network_state(red))
+    except Exception:
+        return red, None
+
+
+def _ciclo_registro(ahora: float | None = None) -> dict:
+    """Una pasada: lee, guarda lo nuevo y devuelve cifras para el log."""
+    ahora = time.monotonic() if ahora is None else ahora
+    if not _networks_loaded():
+        _authenticate()
+    redes = _get_networks()
+    conocidas = _registro_estado["redes"]
+    rebuscar = conocidas is None or ahora - _registro_estado["buscado"] > REGISTRO_REBUSCAR
+    objetivo = redes if rebuscar else [m for m in redes if str(m.get("id")) in conocidas]
+
+    with ThreadPoolExecutor(max_workers=HILOS_REGISTRO) as pool:
+        leidas = list(pool.map(_leer_lecturas, objetivo))
+
+    errores = sum(1 for _, filas in leidas if filas is None)
+    nuevas = 0
+    conn = registro.abrir(REGISTRO_DB)
+    try:
+        for red, filas in leidas:
+            if filas:
+                nuevas += registro.guardar(conn, red, filas)
+        if ahora - _registro_estado["purgado"] > 86400:
+            registro.purgar(conn, config.REGISTRO_DIAS)
+            _registro_estado["purgado"] = ahora
+    finally:
+        conn.close()
+
+    if rebuscar:
+        _registro_estado["redes"] = {red for red, filas in leidas if filas}
+        _registro_estado["buscado"] = ahora
+    # Si falla todo, lo probable es que la sesión haya caducado: se rehace
+    # para la próxima pasada, igual que con el ↻ de la lista de redes.
+    if objetivo and errores == len(objetivo):
+        with _state_lock:
+            _state["networks"] = None
+    return {"consultadas": len(objetivo), "errores": errores, "nuevas": nuevas,
+            "con_lecturas": len(_registro_estado["redes"] or ())}
+
+
+def _bucle_registro() -> None:
+    # Un minuto de margen: que el arranque y la primera visita no compitan
+    # con el registro por iniciar sesión.
+    time.sleep(60)
+    while True:
+        try:
+            cifras = _ciclo_registro()
+            app.logger.info("Registro: %(nuevas)d lecturas nuevas de "
+                            "%(consultadas)d redes (%(errores)d con error, "
+                            "%(con_lecturas)d con algo que medir)", cifras)
+        except Exception:
+            app.logger.exception("Fallo en el registro de lecturas")
+        time.sleep(config.REGISTRO_MINUTOS * 60)
+
+
+def arrancar_registro() -> bool:
+    """Lo llama wsgi.py. Devuelve si ha arrancado (no lo hace dos veces)."""
+    if not config.REGISTRO_ACTIVO or _registro_estado["hilo"] is not None:
+        return False
+    hilo = threading.Thread(target=_bucle_registro, name="registro", daemon=True)
+    _registro_estado["hilo"] = hilo
+    hilo.start()
+    return True
 
 
 # ── Imágenes de la red (galería y fotos de elementos) ────────────────────────

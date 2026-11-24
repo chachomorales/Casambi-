@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-web.txt
 
 # Explícito y no `*.py`: desktop.py, main.py y los run*.sh son de la versión de
 # escritorio y de la etapa CLI anterior, y no pintan nada en el servidor.
-COPY app.py auth.py casambi_api.py cobertura.py config.py credentials.py report.py wsgi.py ./
+COPY app.py auth.py casambi_api.py cobertura.py config.py credentials.py registro.py report.py wsgi.py ./
 COPY templates/ ./templates/
 COPY static/ ./static/
 COPY logos/ ./logos/

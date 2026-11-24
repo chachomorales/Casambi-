@@ -163,6 +163,25 @@ MAX_PLANO_PAGINAS_PDF = 50
 MAX_NIVELES_COBERTURA = 20
 
 
+# ── Registro de temperatura y medidas eléctricas ─────────────────────────────
+# Encendido solo en el servidor: el `.app` está abierto a ratos, y un registro
+# con huecos de días no sirve para graficar. CASAMBI_REGISTRO=1/0 lo fuerza.
+
+def _entero(nombre: str, defecto: int) -> int:
+    try:
+        return int(os.environ.get(nombre) or defecto)
+    except ValueError:
+        return defecto
+
+
+REGISTRO_ACTIVO = (os.environ.get("CASAMBI_REGISTRO")
+                   or ("0" if ES_ESCRITORIO else "1")).strip() == "1"
+REGISTRO_MINUTOS = max(5, _entero("CASAMBI_REGISTRO_MINUTOS", 15))
+# Algo más de un año: sobra para comparar un mes con el del año anterior, y en
+# espacio no se nota (decenas de MB).
+REGISTRO_DIAS = _entero("CASAMBI_REGISTRO_DIAS", 400)
+
+
 def aplicar(app) -> None:
     """Vuelca la configuración sobre la app de Flask ya creada."""
     app.secret_key = clave_secreta()
