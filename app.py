@@ -548,6 +548,11 @@ def _cargar_resumen(progress=None) -> None:
     with _state_lock:
         _state["resumen"] = {"redes": filas, "leido_en": config.ahora(),
                              "momento": time.monotonic()}
+    # La línea que dice en `docker compose logs` que el monitoreo sigue vivo.
+    app.logger.info("Resumen: %d redes leídas, %d conservan la lectura anterior, "
+                    "%d sin leer", len(filas),
+                    sum(1 for f in filas if f.get("anterior")),
+                    sum(1 for f in filas if f["nivel"] == "error"))
 
 
 def _bucle_monitor() -> None:
