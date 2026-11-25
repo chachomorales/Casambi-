@@ -1849,8 +1849,9 @@
     const dos = n => String(n).padStart(2, '0');
     let dias = 30, cargado = false;
 
-    // De casi blanco a azul marino, el mismo par de la paleta de la app.
-    const DESDE = [244, 247, 251], HASTA = [31, 56, 100];
+    // De casi blanco a rojo (#C00000, el rojo de la paleta): en un mapa de
+    // calor se lee de inmediato como «más ocupado».
+    const DESDE = [252, 243, 243], HASTA = [192, 0, 0];
     const tono = p => 'rgb(' + DESDE.map((c, i) => Math.round(c + (HASTA[i] - c) * p / 100)).join(',') + ')';
 
     function div(clase, texto) {

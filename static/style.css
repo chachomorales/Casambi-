@@ -1490,7 +1490,7 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
   display: inline-block;
   width: 90px; height: 10px;
   border: 1px solid var(--border);
-  background: linear-gradient(to right, #F4F7FB, #1F3864);
+  background: linear-gradient(to right, #FCF3F3, #C00000);
 }
 .ocup-leyenda .ocup-celda { width: 12px; height: 12px; margin-left: 10px; }
 .ocup-mapas { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin: 10px 0; }
@@ -1501,5 +1501,5 @@ tbody tr.row-highlight:nth-child(even) { background: #FFE9A8; }
 .ocup-eje  { font-size: 10px; color: #889; line-height: 12px; }
 .ocup-hora { text-align: left; }
 .ocup-dia  { padding-right: 4px; }
-.ocup-celda { height: 14px; border-radius: 2px; background: #F4F7FB; }
+.ocup-celda { height: 14px; border-radius: 2px; background: #FCF3F3; }
 .ocup-vacia { background: repeating-linear-gradient(45deg, #eee 0 3px, #fff 3px 6px); }
