@@ -25,11 +25,11 @@ sigue valiendo en los dos modos.
 CASAMBI_MODE=desktop .venv/bin/gunicorn -w 1 -k gthread --threads 8 \
   -b 127.0.0.1:8000 wsgi:application
 
-.venv/bin/python -m pytest tests/ -q   # 343 tests, ~7 s
+.venv/bin/python -m pytest tests/ -q   # 358 tests, ~7 s
 
 # Si el venv es el de escritorio, 36 de ellos no pueden correr: test_acceso y
 # test_credenciales necesitan cryptography y PyJWT, que se dejan fuera a
-# propósito para que PyInstaller no las meta en el .app. Los otros 307:
+# propósito para que PyInstaller no las meta en el .app. Los otros 322:
 .venv/bin/python -m pytest tests/ -q \
   --ignore=tests/test_acceso.py --ignore=tests/test_credenciales.py
 
@@ -168,7 +168,7 @@ saber al tocar el código:
 | `wsgi.py` | Lanzador web: valida la configuración al arrancar y aplica `ProxyFix` |
 | `config.py` | Lo que difiere entre las dos versiones: clave, backend de credenciales, límites, cookies, zona horaria |
 | `auth.py` | Verificación del JWT de Cloudflare Access; puebla `g.user_email` |
-| `tests/` | 343 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
+| `tests/` | 358 tests. Cliente de Casambi y Llavero sustituidos: nunca salen a la red |
 | `despliegue/` | Dockerfile y compose en la raíz; aquí el README de operación y los scripts de copia |
 | `app.py` | Servidor interno: ~20 rutas, caché en memoria por red, pantalla de progreso, anotaciones del usuario |
 | `casambi_api.py` | Cliente de `door.casambi.com` + bridge WebSocket para activar escenas |
@@ -251,7 +251,40 @@ escritorio.
   solos cuando lo tengan.
 - Si fallan todas las redes de una pasada, se rehace la sesión en la siguiente.
 
-**Las pestañas Temperatura y Potencia** salen solo si `registro.db` tiene lecturas
+**La luz (lux) va aparte** porque llega en `controls` (tipo `Lux`), sin hora:
+es la lectura viva. `registro.extraer()` la guarda con la hora de la consulta,
+redondeada al minuto, y solo de unidades en línea. Además, la primera vez que el
+registro ve lux en una red trae lo que haya en el registro de la nube
+(`_importar_historial()`, una vez por red y medida, tabla `importaciones`). En el
+barrido del 2026-11-24 solo LANCO los sube: ~18.000 al día de 9 fotosensores,
+desde el 26-09. Se guardan en medias de 5 min (143.000 filas, 9 MB); tal cual
+pasaban del millón. Se piden por tramos de 12 h con 1 s de pausa, y un tramo
+que no cabe se parte en dos: la importación de LANCO tardó ~7 min y deja a la
+nube respondiendo 429 un rato. Una consulta de tanteo evita recorrer los 120
+tramos en las redes que no suben nada (las MM tienen fotosensores, pero no los
+registran).
+
+**La presencia del registro de la nube son tramos, no puntos.** Cada datapoint
+`presence` es un intervalo: empieza a su hora, dura |valor| segundos y es «hay
+alguien» si el valor es positivo. Comprobado en LANCO el 2026-11-24: el 99,6 %
+de 10.080 tramos empieza donde acaba el anterior, el signo se alterna, y el
+último tramo de cada sensor cuadró con su estado en vivo. No confundir con un
+nivel: valores como `-131.778` o `3571.3` son duraciones.
+
+De ahí sale la pestaña **Ocupación**: un mapa 7 × 24 por sensor con el % de
+tiempo con presencia, sumando las semanas del periodo (7, 30 o 60 días). La
+tabla `ocupacion` guarda por sensor y hora los segundos con presencia y los
+observados; el % va sobre lo observado, para que una hora sin gateway salga en
+blanco y no como vacía. `_importar_presencia()` la trae una vez al día de las
+redes con presencia y repite el último día (`guardar_ocupacion` sustituye, no
+suma), porque un tramo largo solo se registra al acabar. Los 60 días de LANCO
+fueron 12.624 horas en 800 KB, 6,5 min y 85 MB de memoria: se suma por trozos.
+Solo LANCO sube presencia; las MM tienen sensores pero su gateway no la
+registra. Primera lectura: «Andel 1» sigue un horario laboral, pero «Foto 1» a
+«Foto 5» marcan presencia el 65–96 % del tiempo, madrugadas incluidas: no parece
+gente, y está por confirmar con el cliente.
+
+**Las pestañas Temperatura, Potencia y Luz** salen solo si `registro.db` tiene lecturas
 de esa medida en esa red (`_series_disponibles()`), así que en el `.app` no
 aparecen. Las medidas con gráfica están en `SERIES` (app.py); añadir otra
 (tensión, corriente) es una entrada ahí y su texto en `textos_serie` de

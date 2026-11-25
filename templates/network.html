@@ -99,6 +99,9 @@
   {%- for sr in series %}
   <button class="tab" data-tab="{{ sr.clave }}">{{ sr.titulo }}</button>
   {%- endfor %}
+  {%- if ocupacion_desde %}
+  <button class="tab" data-tab="ocupacion">Ocupación</button>
+  {%- endif %}
   <button class="tab" data-tab="luminarias">Luminarias <span class="badge">{{ luminarias|length }}</span></button>
   <button class="tab" data-tab="pulsadores">Pulsadores <span class="badge">{{ pulsadores|length }}</span></button>
   <button class="tab" data-tab="sensores">Sensores <span class="badge">{{ sensores|length }}</span></button>
@@ -250,6 +253,8 @@
                   'nota': 'Es la temperatura del equipo, no la del ambiente, y sigue al nivel de regulación.'},
   'potencia':    {'mayores': 'Las 6 de más consumo',
                   'nota': 'Es la potencia que mide el propio módulo de medición (McWong PSC-WCM-450).'},
+  'luz':         {'mayores': 'Las 6 con más luz',
+                  'nota': 'Es la luz que mide cada fotosensor. La nube no da la hora de esa lectura, así que se guarda con la de la consulta, cada 15 minutos; lo traído del registro de la nube (hoy, solo LANCO) son medias de 5 minutos.'},
 } %}
 {% for sr in series %}
 <!-- {{ sr.titulo }}: del registro propio del servidor, no de la nube -->
@@ -283,6 +288,27 @@
   <p class="hint">Registro desde el {{ sr.desde.strftime('%d/%m/%Y %H:%M') }}. {{ textos_serie[sr.clave].nota }} Cada punto es la media de su tramo; mínima, máxima y media salen de las lecturas sin promediar. Un hueco en la línea es un rato en que la nube no recibió lecturas, casi siempre porque el gateway no respondía.</p>
 </section>
 {% endfor %}
+
+{% if ocupacion_desde %}
+<!-- Ocupación: de los tramos de presencia del registro de la nube -->
+<section class="tab-panel" id="panel-ocupacion"
+         data-url="{{ url_for('ocupacion_red', network_id=network_id) }}">
+  <div class="serie-barra">
+    <div class="serie-rangos" role="group" aria-label="Periodo">
+      <button type="button" class="serie-rango" data-dias="7">7 días</button>
+      <button type="button" class="serie-rango activo" data-dias="30">30 días</button>
+      <button type="button" class="serie-rango" data-dias="60">60 días</button>
+    </div>
+    <div class="ocup-leyenda" aria-hidden="true">
+      <span>0 %</span><i class="ocup-escala"></i><span>100 %</span>
+      <i class="ocup-celda ocup-vacia"></i><span>sin dato</span>
+    </div>
+  </div>
+  <p class="hint ocup-estado">Cargando…</p>
+  <div class="ocup-mapas"></div>
+  <p class="hint">Porcentaje del tiempo en que cada sensor detectó presencia, por día de la semana y hora, sumando todas las semanas del periodo. Sale del registro de presencia de la nube, que guarda cada tramo con y sin presencia, así que no son muestras sino el tiempo real. Se calcula sobre el tiempo con dato: una hora en que el gateway no respondía queda en blanco, no como vacía. Registro desde el {{ ocupacion_desde.strftime('%d/%m/%Y') }}; se pone al día una vez al día.</p>
+</section>
+{% endif %}
 
 <!-- Luminarias -->
 <section class="tab-panel" id="panel-luminarias">
@@ -1811,5 +1837,86 @@
     });
     siVisible();
   });
+</script>
+<script nonce="{{ csp_nonce() }}">
+  // Mapa de calor de ocupación: una cuadrícula 7 × 24 por sensor.
+  (function () {
+    const panel = document.getElementById('panel-ocupacion');
+    if (!panel) return;
+    const mapas = panel.querySelector('.ocup-mapas');
+    const estado = panel.querySelector('.ocup-estado');
+    const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    const dos = n => String(n).padStart(2, '0');
+    let dias = 30, cargado = false;
+
+    // De casi blanco a azul marino, el mismo par de la paleta de la app.
+    const DESDE = [244, 247, 251], HASTA = [31, 56, 100];
+    const tono = p => 'rgb(' + DESDE.map((c, i) => Math.round(c + (HASTA[i] - c) * p / 100)).join(',') + ')';
+
+    function div(clase, texto) {
+      const e = document.createElement('div');
+      if (clase) e.className = clase;
+      if (texto !== undefined) e.textContent = texto;
+      return e;
+    }
+
+    function pintar(datos) {
+      mapas.textContent = '';
+      if (!datos.sensores.length) {
+        estado.textContent = 'No hay datos de ocupación en este periodo.';
+        return;
+      }
+      estado.textContent = datos.sensores.length + ' sensores · últimos ' + datos.dias + ' días';
+      datos.sensores.forEach(s => {
+        const tarjeta = div('ocup-tarjeta');
+        const cab = div('ocup-cab');
+        cab.append(div('ocup-nombre', s.nombre));
+        let resumen = s.ocupado === null ? 'sin dato'
+          : s.ocupado + ' % del tiempo con presencia';
+        if (s.pico) resumen += ' · pico ' + DIAS[s.pico.dia] + ' ' + dos(s.pico.hora) + ':00 (' + s.pico.pct + ' %)';
+        resumen += ' · ' + s.horas + ' h observadas';
+        cab.append(div('ocup-resumen', resumen));
+        tarjeta.append(cab);
+
+        const rejilla = div('ocup-grid');
+        rejilla.append(div('ocup-eje'));
+        for (let h = 0; h < 24; h++) rejilla.append(div('ocup-eje ocup-hora', h % 6 === 0 ? dos(h) : ''));
+        s.celdas.forEach((fila, d) => {
+          rejilla.append(div('ocup-eje ocup-dia', DIAS[d]));
+          fila.forEach((p, h) => {
+            const c = div('ocup-celda' + (p === null ? ' ocup-vacia' : ''));
+            if (p !== null) c.style.background = tono(p);
+            c.title = DIAS[d] + ' ' + dos(h) + ':00–' + dos((h + 1) % 24) + ':00 · ' +
+                      (p === null ? 'sin dato' : p + ' % con presencia');
+            rejilla.append(c);
+          });
+        });
+        tarjeta.append(rejilla);
+        mapas.append(tarjeta);
+      });
+    }
+
+    async function cargar() {
+      estado.textContent = 'Cargando…';
+      try {
+        const r = await fetch(panel.dataset.url + '?dias=' + dias);
+        if (!r.ok) throw new Error(r.status);
+        pintar(await r.json());
+      } catch (e) {
+        estado.textContent = 'No se pudo leer la ocupación (' + e.message + ').';
+      }
+    }
+
+    panel.querySelectorAll('.serie-rango').forEach(b => b.addEventListener('click', () => {
+      dias = Number(b.dataset.dias);
+      panel.querySelectorAll('.serie-rango').forEach(o => o.classList.toggle('activo', o === b));
+      cargar();
+    }));
+    function siVisible() {
+      if (!cargado && panel.classList.contains('active')) { cargado = true; cargar(); }
+    }
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', siVisible));
+    siVisible();
+  })();
 </script>
 {% endblock %}

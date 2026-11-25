@@ -24,7 +24,7 @@ import time
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -48,7 +48,7 @@ import cobertura
 import config
 import credentials
 import registro
-from casambi_api import CasambiAPIError, CasambiClient
+from casambi_api import DIAS_DATAPOINTS, CasambiAPIError, CasambiClient
 from report import (
     _classify_unit,
     _controls_summary,
@@ -655,19 +655,110 @@ REGISTRO_REBUSCAR = 6 * 3600
 HILOS_REGISTRO = 4
 
 _registro_estado = {"redes": None, "buscado": 0.0, "purgado": 0.0,
-                    "hilo": None}
+                    "presencia": None, "hilo": None}
 
 
-def _leer_lecturas(meta: dict) -> tuple[str, list | None]:
+def _leer_lecturas(meta: dict) -> tuple[str, list | None, bool]:
+    """(red, lecturas o None si falló, si tiene sensores de presencia)."""
     red = str(meta.get("id"))
     with _state_lock:
         client = _state["clients"].get(meta.get("account_id"))
     if client is None:
-        return red, None
+        return red, None, False
     try:
-        return red, registro.extraer(client.get_network_state(red))
+        state = client.get_network_state(red)
     except Exception:
-        return red, None
+        return red, None, False
+    return red, registro.extraer(state), registro.tiene_presencia(state)
+
+
+# Historial que la nube ya tiene y el registro propio no: hoy, los lux de
+# LANCO, cuyo gateway los sube cada pocos segundos y la nube los guarda 60
+# días. Se trae una vez por red y medida, la primera vez que el registro ve
+# esa medida en la red. Por tramos de 12 h (unos 9.000 puntos, por debajo del
+# límite de 20.000) y con pausa entre peticiones, porque la nube responde 429.
+HISTORIAL_NUBE = {registro.LUZ: "lux"}
+TRAMO_HISTORIAL = timedelta(hours=12)
+
+
+def _cliente_de(red: str) -> CasambiClient:
+    meta = _find_network_meta(red) or {}
+    with _state_lock:
+        client = _state["clients"].get(meta.get("account_id"))
+    if client is None:
+        raise CasambiAPIError("La red no pertenece a ninguna cuenta configurada.")
+    return client
+
+
+def _puntos_nube(client, red: str, clave: str, desde: datetime, hasta: datetime):
+    """Los datapoints de `clave` entre dos horas UTC, a trozos."""
+    # Una consulta de tanteo: la mayoría de redes no suben nada, y recorrer
+    # 120 tramos vacíos sería perder minutos.
+    tanteo = client.get_datapoints_tramo(red, clave, desde, hasta)
+    if not tanteo["hay_mas"]:
+        yield tanteo["puntos"]
+        return
+    pendientes, inicio = [], desde
+    while inicio < hasta:
+        pendientes.append((inicio, min(inicio + TRAMO_HISTORIAL, hasta)))
+        inicio += TRAMO_HISTORIAL
+    while pendientes:
+        ini, fin = pendientes.pop(0)
+        tramo = client.get_datapoints_tramo(red, clave, ini, fin)
+        # Si no cupo, se parte en dos: así no se pierde ningún trozo.
+        if tramo["hay_mas"] and fin - ini > timedelta(minutes=30):
+            mitad = ini + (fin - ini) / 2
+            pendientes[:0] = [(ini, mitad), (mitad, fin)]
+            continue
+        yield tramo["puntos"]
+        time.sleep(1)
+
+
+def _importar_historial(red: str, magnitud: str, conn) -> int:
+    client = _cliente_de(red)
+    hasta = datetime.now(timezone.utc)
+    guardadas = 0
+    for puntos in _puntos_nube(client, red, HISTORIAL_NUBE[magnitud],
+                               hasta - timedelta(days=DIAS_DATAPOINTS), hasta):
+        guardadas += registro.guardar(
+            conn, red, registro.promediar_datapoints(puntos, magnitud))
+    registro.marcar_importado(conn, red, magnitud, guardadas)
+    if guardadas:
+        app.logger.info("Registro: importadas %d medias de %s de la red %s desde "
+                        "la nube", guardadas, magnitud,
+                        (_find_network_meta(red) or {}).get("name") or red)
+    return guardadas
+
+
+# La ocupación sale del registro de presencia de la nube, no de la consulta
+# propia: cada 15 min solo se vería si hay alguien en ese instante, y la nube
+# guarda los tramos enteros. Se trae una vez al día, repitiendo el último día
+# porque sus últimas horas llegan incompletas (ver registro.guardar_ocupacion).
+IMPORTAR_PRESENCIA_CADA = 24 * 3600 * 1000
+SOLAPE_PRESENCIA = timedelta(hours=24)
+# Un tramo que empezó antes de la ventana no llega; con este margen solo se
+# pierde uno que dure más de 12 h.
+MARGEN_PRESENCIA = timedelta(hours=12)
+
+
+def _importar_presencia(red: str, conn, dias: int = DIAS_DATAPOINTS) -> int:
+    client = _cliente_de(red)
+    hasta = datetime.now(timezone.utc)
+    limite = int((hasta - timedelta(days=dias)).timestamp() * 1000)
+    ultima = registro.ultima_hora_ocupacion(conn, red)
+    desde_ms = limite if ultima is None else max(
+        limite, ultima - int(SOLAPE_PRESENCIA.total_seconds() * 1000))
+    desde_ms = desde_ms // registro.HORA * registro.HORA
+    desde = datetime.fromtimestamp(desde_ms / 1000, timezone.utc)
+    horas: dict = {}
+    for puntos in _puntos_nube(client, red, "presence", desde - MARGEN_PRESENCIA, hasta):
+        registro.sumar_ocupacion(puntos, horas)
+    escritas = registro.guardar_ocupacion(conn, red, horas, desde_ms)
+    registro.marcar_importado(conn, red, registro.PRESENCIA, escritas)
+    if escritas:
+        app.logger.info("Registro: %d horas de ocupación de la red %s desde la nube",
+                        escritas, (_find_network_meta(red) or {}).get("name") or red)
+    return escritas
 
 
 def _ciclo_registro(ahora: float | None = None) -> dict:
@@ -683,13 +774,35 @@ def _ciclo_registro(ahora: float | None = None) -> dict:
     with ThreadPoolExecutor(max_workers=HILOS_REGISTRO) as pool:
         leidas = list(pool.map(_leer_lecturas, objetivo))
 
-    errores = sum(1 for _, filas in leidas if filas is None)
+    errores = sum(1 for _, filas, _ in leidas if filas is None)
     nuevas = 0
     conn = registro.abrir(REGISTRO_DB)
     try:
-        for red, filas in leidas:
+        for red, filas, _ in leidas:
             if filas:
                 nuevas += registro.guardar(conn, red, filas)
+        for red, filas, _ in leidas:
+            for magnitud in {f[1] for f in filas or ()} & set(HISTORIAL_NUBE):
+                if registro.importado(conn, red, magnitud):
+                    continue
+                try:
+                    _importar_historial(red, magnitud, conn)
+                except Exception:
+                    # Se reintenta en la próxima búsqueda; no tumba la pasada.
+                    app.logger.exception("No se pudo importar el historial de %s "
+                                         "de la red %s", magnitud, red)
+        if rebuscar:
+            _registro_estado["presencia"] = {red for red, _, p in leidas if p}
+        hoy = int(time.time() * 1000)
+        for red in _registro_estado["presencia"] or ():
+            hecha = registro.importado_en(conn, red, registro.PRESENCIA)
+            if hecha is not None and hoy - hecha < IMPORTAR_PRESENCIA_CADA:
+                continue
+            try:
+                _importar_presencia(red, conn)
+            except Exception:
+                app.logger.exception("No se pudo importar la presencia de la red %s",
+                                     red)
         if ahora - _registro_estado["purgado"] > 86400:
             registro.purgar(conn, config.REGISTRO_DIAS)
             _registro_estado["purgado"] = ahora
@@ -697,7 +810,7 @@ def _ciclo_registro(ahora: float | None = None) -> dict:
         conn.close()
 
     if rebuscar:
-        _registro_estado["redes"] = {red for red, filas in leidas if filas}
+        _registro_estado["redes"] = {red for red, filas, _ in leidas if filas}
         _registro_estado["buscado"] = ahora
     # Si falla todo, lo probable es que la sesión haya caducado: se rehace
     # para la próxima pasada, igual que con el ↻ de la lista de redes.
@@ -742,6 +855,7 @@ def arrancar_registro() -> bool:
 SERIES = {
     "temperatura": {"magnitud": "Temperature", "titulo": "Temperatura", "unidad": "°C"},
     "potencia":    {"magnitud": "Power",       "titulo": "Potencia",    "unidad": "W"},
+    "luz":         {"magnitud": registro.LUZ,  "titulo": "Luz",         "unidad": "lx"},
 }
 RANGOS_SERIE = {"24h": 1, "7d": 7, "30d": 30, "todo": None}
 PUNTOS_GRAFICA = 200          # por unidad: más que eso no cabe en el ancho
@@ -764,6 +878,33 @@ def _series_disponibles(network_id: str) -> list[dict]:
                   .replace(tzinfo=None)}
         for clave, momento in primeras.items() if momento is not None
     ]
+
+
+DIAS_OCUPACION = (7, 30, 60)
+# Menos de 10 minutos observados en una casilla (un día de la semana a una
+# hora, sumando todas las semanas) no dan para un porcentaje: queda en blanco.
+OBSERVADO_MINIMO = 600
+
+
+def _ocupacion_desde(network_id: str) -> datetime | None:
+    """Desde cuándo hay ocupación guardada de la red, o None si no hay."""
+    if not REGISTRO_DB.is_file():
+        return None
+    conn = registro.abrir(REGISTRO_DB)
+    try:
+        (hora,) = conn.execute("SELECT MIN(hora) FROM ocupacion WHERE red = ?",
+                               (str(network_id),)).fetchone()
+    finally:
+        conn.close()
+    if hora is None:
+        return None
+    return datetime.fromtimestamp(hora / 1000, config.zona_horaria()).replace(
+        tzinfo=None)
+
+
+def _desfase_minutos() -> int:
+    # Guatemala no cambia de hora, así que un desfase fijo basta.
+    return int(datetime.now(config.zona_horaria()).utcoffset().total_seconds() // 60)
 
 
 def _tramo(desde: int, hasta: int) -> int:
@@ -1745,6 +1886,7 @@ def network_view(network_id):
         current_id=str(network_id),
         cuentas=credentials.list_accounts(_HOME),
         series=_series_disponibles(network_id),
+        ocupacion_desde=_ocupacion_desde(network_id),
         **ctx,
     )
 
@@ -1760,10 +1902,9 @@ def serie_registro(network_id, clave):
     if rango not in RANGOS_SERIE:
         abort(400)
     hasta = int(time.time() * 1000)
-    # Guatemala no cambia de hora, así que un desfase fijo basta para que el
-    # navegador rotule en hora local aunque quien mira esté en otro país.
-    desfase = int(datetime.now(config.zona_horaria()).utcoffset()
-                  .total_seconds() // 60)
+    # Con el desfase, el navegador rotula en hora de Guatemala aunque quien
+    # mira esté en otro país.
+    desfase = _desfase_minutos()
     vacio = {"unidades": [], "desde": None, "hasta": hasta, "tramo": TRAMO_MINIMO,
              "desfase_min": desfase}
     if not REGISTRO_DB.is_file():
@@ -1789,6 +1930,63 @@ def serie_registro(network_id, clave):
                 for u, d in datos.items()]
     unidades.sort(key=lambda u: -u["max"])
     return jsonify({**vacio, "unidades": unidades, "desde": desde, "tramo": tramo})
+
+
+@app.route("/network/<network_id>/ocupacion")
+@require_network
+def ocupacion_red(network_id):
+    """
+    Ocupación de cada sensor por día de la semana y hora, en JSON.
+
+    Cada casilla suma todas las semanas del periodo: el porcentaje es el tiempo
+    con presencia sobre el tiempo observado en ese día y hora.
+    """
+    try:
+        dias = int(request.args.get("dias", 30))
+    except ValueError:
+        abort(400)
+    if dias not in DIAS_OCUPACION:
+        abort(400)
+    hasta = int(time.time() * 1000)
+    desfase = _desfase_minutos()
+    respuesta = {"sensores": [], "dias": dias, "hasta": hasta, "desfase_min": desfase}
+    if not REGISTRO_DB.is_file():
+        return jsonify(respuesta)
+    conn = registro.abrir(REGISTRO_DB)
+    try:
+        filas = registro.ocupacion(conn, network_id, hasta - dias * 86_400_000)
+    finally:
+        conn.close()
+
+    por_unidad: dict[int, list] = {}
+    for unidad, hora, ocupado, observado in filas:
+        local = datetime.fromtimestamp((hora + desfase * 60_000) / 1000, timezone.utc)
+        celdas = por_unidad.setdefault(unidad, [[[0.0, 0.0] for _ in range(24)]
+                                                for _ in range(7)])
+        celda = celdas[local.weekday()][local.hour]
+        celda[0] += ocupado
+        celda[1] += observado
+
+    with _state_lock:
+        cacheado = _state["cache"].get(str(network_id))
+    nombres = {u.get("id"): u.get("name") for u in
+               (cacheado["network"].get("units", []) if cacheado else [])}
+    for unidad, celdas in por_unidad.items():
+        ocupado = sum(c[0] for fila in celdas for c in fila)
+        observado = sum(c[1] for fila in celdas for c in fila)
+        porcentajes = [[round(100 * o / v) if v >= OBSERVADO_MINIMO else None
+                        for o, v in fila] for fila in celdas]
+        pico = max(((p, d, h) for d, fila in enumerate(porcentajes)
+                    for h, p in enumerate(fila) if p is not None), default=None)
+        respuesta["sensores"].append({
+            "id": unidad, "nombre": nombres.get(unidad) or f"ID {unidad}",
+            "celdas": porcentajes,
+            "ocupado": round(100 * ocupado / observado) if observado else None,
+            "horas": round(observado / 3600),
+            "pico": {"dia": pico[1], "hora": pico[2], "pct": pico[0]} if pico else None,
+        })
+    respuesta["sensores"].sort(key=lambda x: _clave_natural(x["nombre"]))
+    return jsonify(respuesta)
 
 
 @app.route("/network/<network_id>/refresh", methods=["POST"])

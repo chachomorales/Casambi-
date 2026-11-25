@@ -203,3 +203,177 @@ def test_con_lecturas_de_potencia_sale_su_pestana_y_su_serie(cliente, monkeypatc
 
 def test_una_medida_sin_grafica_es_un_404(cliente):
     assert cliente.get(f"/network/{RED_ID}/serie/tension").status_code == 404
+
+
+# ── Luz: lectura viva, sin hora propia, y el historial de la nube ─────────────
+
+def _con_lux(online=True, lux=320.0):
+    return {"units": [{"id": 7, "online": online,
+                       "controls": [[{"type": "Presence", "status": "absent"},
+                                     {"type": "Lux", "value": lux}]]}]}
+
+
+def test_los_lux_van_con_la_hora_de_la_consulta_redondeada_al_minuto():
+    consulta = T0 + 42_123
+    filas = registro.extraer(_con_lux(), consulta=consulta)
+    assert filas == [(7, "Lux", consulta // 60_000 * 60_000, 320.0)]
+
+
+def test_un_sensor_desconectado_no_da_lux():
+    """Conserva el último valor, y guardarlo lo haría pasar por actual."""
+    assert registro.extraer(_con_lux(online=False), consulta=T0) == []
+
+
+def test_los_controles_planos_tambien_valen():
+    estado = {"units": [{"id": 7, "online": True,
+                         "controls": [{"type": "Lux", "value": 12}]}]}
+    assert registro.extraer(estado, consulta=T0)[0][3] == 12.0
+
+
+def test_el_historial_de_la_nube_se_guarda_en_medias_de_5_min():
+    puntos = [
+        {"unit": 33, "key": "lux", "value": "10.0", "time": "2026-11-24T12:00:01.5+00:00"},
+        {"unit": 33, "key": "lux", "value": "30.0", "time": "2026-11-24T12:04:59.25+00:00"},
+        {"unit": 33, "key": "lux", "value": "50.0", "time": "2026-11-24T12:05:00+00:00"},
+        {"unit": 33, "key": "lux", "value": "malo", "time": "2026-11-24T12:06:00+00:00"},
+    ]
+    filas = registro.promediar_datapoints(puntos, "Lux")
+    base = registro.momento_datapoint("2026-11-24T12:00:00+00:00")
+    assert filas == [(33, "Lux", base + 150_000, 20.0), (33, "Lux", base + 450_000, 50.0)]
+
+
+def _cliente_con_historial(app_cargada, monkeypatch, respuestas):
+    pedidas = []
+
+    def tramo(network_id, keys, desde, hasta):
+        pedidas.append((desde, hasta, keys))
+        return respuestas(desde, hasta)
+    monkeypatch.setattr(app_cargada.cliente_api_falso, "get_datapoints_tramo",
+                        tramo, raising=False)
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: None)
+    return pedidas
+
+
+def test_una_red_sin_lux_en_la_nube_se_resuelve_con_una_consulta(app_cargada,
+                                                                 monkeypatch, tmp_path):
+    pedidas = _cliente_con_historial(app_cargada, monkeypatch,
+                                     lambda d, h: {"puntos": [], "hay_mas": False})
+    conn = registro.abrir(tmp_path / "r.db")
+    assert app_module._importar_historial(RED_ID, "Lux", conn) == 0
+    assert len(pedidas) == 1 and registro.importado(conn, RED_ID, "Lux")
+
+
+def test_un_historial_grande_se_trae_por_tramos(app_cargada, monkeypatch, tmp_path):
+    def respuestas(desde, hasta):
+        if hasta - desde > app_module.TRAMO_HISTORIAL:
+            return {"puntos": [], "hay_mas": True}       # el tanteo no cabe
+        momento = (desde + (hasta - desde) / 2).strftime("%Y-%m-%dT%H:%M:%S.5+00:00")
+        return {"puntos": [{"unit": 33, "value": "40", "time": momento}], "hay_mas": False}
+    pedidas = _cliente_con_historial(app_cargada, monkeypatch, respuestas)
+    conn = registro.abrir(tmp_path / "r.db")
+    guardadas = app_module._importar_historial(RED_ID, "Lux", conn)
+    assert guardadas == len(pedidas) - 1 == 120     # 60 días en tramos de 12 h
+
+
+def test_el_ciclo_importa_una_sola_vez(app_cargada, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "registro.db")
+    monkeypatch.setitem(app_module._registro_estado, "redes", None)
+    monkeypatch.setattr(app_cargada.cliente_api_falso, "get_network_state",
+                        lambda red: _con_lux())
+    pedidas = _cliente_con_historial(app_cargada, monkeypatch,
+                                     lambda d, h: {"puntos": [], "hay_mas": False})
+    app_module._ciclo_registro(ahora=10_000.0)
+    app_module._ciclo_registro(ahora=10_900.0)
+    # Una consulta de lux (el historial) y una de presencia (la ocupación del
+    # día), y ninguna más en la segunda pasada.
+    assert sorted(k for _, _, k in pedidas) == ["lux", "presence"]
+
+
+def test_la_luz_tiene_su_pestana(cliente, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "registro.db")
+    conn = registro.abrir(tmp_path / "registro.db")
+    registro.guardar(conn, RED_ID, registro.extraer(_con_lux()))
+    conn.close()
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="luz"' in html and 'data-unidad="lx"' in html
+
+
+# ── Ocupación: tramos de presencia de la nube ─────────────────────────────────
+
+def _tramo(unidad, hora_utc, valor):
+    return {"unit": unidad, "key": "presence", "value": str(valor),
+            "time": f"2026-11-23T{hora_utc}.5+00:00"}
+
+
+def test_un_tramo_que_cruza_la_hora_se_reparte():
+    horas = registro.sumar_ocupacion([_tramo(33, "13:59:00", 120.0)])
+    base = registro.momento_datapoint("2026-11-23T13:00:00+00:00")
+    assert horas == {(33, base): [59.5, 59.5],
+                     (33, base + registro.HORA): [60.5, 60.5]}
+
+
+def test_el_signo_dice_si_hubo_alguien():
+    horas = registro.sumar_ocupacion([_tramo(33, "14:00:00", 600.0),
+                                      _tramo(33, "14:10:00", -1800.0)])
+    (ocupado, observado), = horas.values()
+    assert (ocupado, observado) == (600.0, 2400.0)
+
+
+def test_sumar_por_trozos_da_lo_mismo_que_de_una_vez():
+    tramos = [_tramo(33, "14:00:00", 600.0), _tramo(33, "14:10:00", -1800.0)]
+    acumulado = registro.sumar_ocupacion(tramos[:1])
+    registro.sumar_ocupacion(tramos[1:], acumulado)
+    assert acumulado == registro.sumar_ocupacion(tramos)
+
+
+def test_reimportar_sustituye_las_horas_y_no_las_suma(tmp_path):
+    conn = registro.abrir(tmp_path / "r.db")
+    horas = registro.sumar_ocupacion([_tramo(33, "14:00:00", 600.0)])
+    registro.guardar_ocupacion(conn, "red", horas, 0)
+    registro.guardar_ocupacion(conn, "red", horas, 0)
+    assert registro.ocupacion(conn, "red", 0)[0][2:] == (600.0, 600.0)
+
+
+def test_la_ocupacion_se_agrupa_por_dia_y_hora_de_guatemala(cliente, monkeypatch,
+                                                            tmp_path):
+    import time
+    monkeypatch.setattr(app_module, "REGISTRO_DB", tmp_path / "registro.db")
+    conn = registro.abrir(tmp_path / "registro.db")
+    # Un lunes a las 20:00 UTC son las 14:00 de Guatemala, también lunes.
+    ahora = int(time.time() * 1000)
+    lunes = ahora - (ahora % (7 * 86_400_000)) - 3 * 86_400_000 + 20 * registro.HORA
+    while lunes > ahora:
+        lunes -= 7 * 86_400_000
+    from datetime import datetime, timezone
+    assert datetime.fromtimestamp(lunes / 1000, timezone.utc).weekday() == 0
+    registro.guardar_ocupacion(conn, RED_ID, {(1, lunes): [900.0, 3600.0],
+                                              (4, lunes): [0.0, 120.0]}, 0)
+    conn.close()
+    html = cliente.get(f"/network/{RED_ID}").get_data(as_text=True)
+    assert 'data-tab="ocupacion"' in html
+    d = cliente.get(f"/network/{RED_ID}/ocupacion?dias=30").get_json()
+    sensores = {s["nombre"]: s for s in d["sensores"]}
+    assert sensores["Luminaria pasillo"]["celdas"][0][14] == 25
+    assert sensores["Luminaria pasillo"]["pico"] == {"dia": 0, "hora": 14, "pct": 25}
+    # Dos minutos observados no dan para un porcentaje.
+    assert sensores["Pasarela"]["celdas"][0][14] is None
+
+
+def test_un_periodo_inventado_es_un_400(cliente):
+    assert cliente.get(f"/network/{RED_ID}/ocupacion?dias=13").status_code == 400
+    assert cliente.get(f"/network/{RED_ID}/ocupacion?dias=x").status_code == 400
+
+
+def test_la_presencia_se_reimporta_desde_el_dia_anterior(app_cargada, monkeypatch,
+                                                         tmp_path):
+    pedidas = _cliente_con_historial(app_cargada, monkeypatch,
+                                     lambda d, h: {"puntos": [], "hay_mas": False})
+    conn = registro.abrir(tmp_path / "r.db")
+    import time
+    ultima = (int(time.time() * 1000) // registro.HORA - 5) * registro.HORA
+    registro.guardar_ocupacion(conn, RED_ID, {(1, ultima): [0.0, 60.0]}, 0)
+    app_module._importar_presencia(RED_ID, conn)
+    desde, _, clave = pedidas[0]
+    esperado = ultima - 24 * registro.HORA - 12 * registro.HORA
+    assert clave == "presence"
+    assert int(desde.timestamp() * 1000) == esperado

@@ -186,6 +186,19 @@ class CasambiClient:
             inicio = fin
         return {"puntos": puntos, "truncado": truncado}
 
+    def get_datapoints_tramo(self, network_id, keys: str, desde: datetime,
+                             hasta: datetime) -> dict:
+        """Una sola petición al data logging: {"puntos", "hay_mas"}. Horas en UTC."""
+        datos = self._get(
+            f"/datapoints/networks/{network_id}/datapoints",
+            network_id=str(network_id),
+            params={"keys": keys, "from": desde.strftime(_FORMATO_DATAPOINTS),
+                    "to": hasta.strftime(_FORMATO_DATAPOINTS),
+                    "limit": LIMITE_DATAPOINTS},
+        )
+        return {"puntos": datos.get("dataPoints") or [],
+                "hay_mas": bool(datos.get("hasMoreResults"))}
+
     def get_image(self, network_id, image_id: str) -> bytes:
         """
         Download a network image (gallery photo or unit icon) as PNG bytes.

@@ -16,11 +16,21 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
 # Los nombres de `sensors` en el estado. Temperatura: Eulum TRED-E-CSB-2A;
 # las cuatro eléctricas: McWong PSC-WCM-450-Power-Metering.
 MAGNITUDES = ("Temperature", "Voltage", "Current", "Power", "Energy")
+
+# La luz no va en `sensors` sino en `controls` (tipo `Lux`), y sin hora: es la
+# lectura viva, así que se guarda con la de la consulta. Solo de unidades en
+# línea; una desconectada conserva su último valor y parecería actual.
+LUZ = "Lux"
+
+# El registro de la nube de LANCO trae unos 18.000 lux al día; se guardan como
+# medias de 5 minutos, que siguen siendo más finas que la consulta propia.
+TRAMO_IMPORTACION = 5 * 60 * 1000
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS lecturas (
@@ -33,27 +43,130 @@ CREATE TABLE IF NOT EXISTS lecturas (
 ) WITHOUT ROWID
 """
 
+# Ocupación por hora: segundos con presencia y segundos con dato. Sale del
+# registro de presencia de la nube, que no guarda puntos sino tramos: cada
+# datapoint `presence` es un intervalo que empieza a su hora, dura |valor|
+# segundos y es «hay alguien» si el valor es positivo (comprobado en LANCO el
+# 2026-11-24: el 99,6 % de 10.080 tramos empieza donde acaba el anterior, y el
+# signo coincidió con el estado en vivo). El porcentaje se calcula sobre lo
+# observado, no sobre la hora entera, para que un hueco del gateway no pase por
+# «nadie».
+_ESQUEMA_OCUPACION = """
+CREATE TABLE IF NOT EXISTS ocupacion (
+    red        TEXT    NOT NULL,
+    unidad     INTEGER NOT NULL,
+    hora       INTEGER NOT NULL,   -- ms UTC del comienzo de la hora
+    ocupado    REAL    NOT NULL,   -- segundos con presencia
+    observado  REAL    NOT NULL,   -- segundos con dato, con o sin presencia
+    PRIMARY KEY (red, unidad, hora)
+) WITHOUT ROWID
+"""
+PRESENCIA = "Presence"
+HORA = 3_600_000
+
+# Qué historiales ya se trajeron del registro de la nube, para no repetirlo.
+_ESQUEMA_IMPORTACIONES = """
+CREATE TABLE IF NOT EXISTS importaciones (
+    red       TEXT    NOT NULL,
+    magnitud  TEXT    NOT NULL,
+    hecha     INTEGER NOT NULL,   -- ms
+    lecturas  INTEGER NOT NULL,
+    PRIMARY KEY (red, magnitud)
+)
+"""
+
 
 def abrir(ruta: Path) -> sqlite3.Connection:
     ruta.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(ruta), timeout=30)
     conn.execute(_ESQUEMA)
+    conn.execute(_ESQUEMA_IMPORTACIONES)
+    conn.execute(_ESQUEMA_OCUPACION)
     return conn
 
 
-def extraer(state: dict) -> list[tuple]:
-    """(unidad, magnitud, momento, valor) de cada lectura del estado de una red."""
+def _numero(valor) -> bool:
+    return isinstance(valor, (int, float)) and not isinstance(valor, bool)
+
+
+def extraer(state: dict, consulta: int | None = None) -> list[tuple]:
+    """
+    (unidad, magnitud, momento, valor) de cada lectura del estado de una red.
+
+    `consulta` (ms) es la hora que se les pone a los lux, que no traen la suya;
+    se redondea al minuto para que dos lecturas del mismo minuto no se dupliquen.
+    """
+    consulta = (int(consulta if consulta is not None else time.time() * 1000)
+                // 60_000 * 60_000)
     filas = []
     for u in state.get("units") or []:
         if not isinstance(u.get("id"), int):
             continue
         for s in u.get("sensors") or []:
             valor, momento = s.get("value"), s.get("timestamp")
-            if (s.get("name") in MAGNITUDES
-                    and isinstance(valor, (int, float)) and not isinstance(valor, bool)
-                    and isinstance(momento, (int, float))):
+            if s.get("name") in MAGNITUDES and _numero(valor) and _numero(momento):
                 filas.append((u["id"], s["name"], int(momento), float(valor)))
+        if not u.get("online"):
+            continue
+        for grupo in u.get("controls") or []:
+            for c in grupo if isinstance(grupo, list) else [grupo]:
+                if (isinstance(c, dict) and c.get("type") == LUZ
+                        and _numero(c.get("value"))):
+                    filas.append((u["id"], LUZ, consulta, float(c["value"])))
     return filas
+
+
+def momento_datapoint(texto) -> int | None:
+    """Ms UTC de un datapoint. La nube recorta los ceros de los milisegundos
+    (`…26.47+00:00`), que `fromisoformat` de Python 3.9 no acepta."""
+    for formato in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return int(datetime.strptime(str(texto), formato).timestamp() * 1000)
+        except ValueError:
+            continue
+    return None
+
+
+def promediar_datapoints(puntos: list, magnitud: str,
+                         tramo: int = TRAMO_IMPORTACION) -> list[tuple]:
+    """Datapoints de la nube como filas del registro, en medias por tramo."""
+    sumas: dict[tuple, list] = {}
+    for p in puntos:
+        momento = momento_datapoint(p.get("time"))
+        try:
+            valor = float(p.get("value"))
+            unidad = int(p.get("unit"))
+        except (TypeError, ValueError):
+            continue
+        if momento is None:
+            continue
+        clave = (unidad, momento // tramo)
+        acumulado = sumas.setdefault(clave, [0.0, 0])
+        acumulado[0] += valor
+        acumulado[1] += 1
+    return [(unidad, magnitud, bloque * tramo + tramo // 2, round(suma / n, 1))
+            for (unidad, bloque), (suma, n) in sorted(sumas.items())]
+
+
+def importado(conn: sqlite3.Connection, red: str, magnitud: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM importaciones WHERE red = ? AND magnitud = ?",
+        (str(red), magnitud)).fetchone() is not None
+
+
+def importado_en(conn: sqlite3.Connection, red: str, magnitud: str) -> int | None:
+    """Ms de la última importación de esa medida, o None si nunca se hizo."""
+    fila = conn.execute(
+        "SELECT hecha FROM importaciones WHERE red = ? AND magnitud = ?",
+        (str(red), magnitud)).fetchone()
+    return fila[0] if fila else None
+
+
+def marcar_importado(conn: sqlite3.Connection, red: str, magnitud: str,
+                     lecturas: int) -> None:
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO importaciones VALUES (?, ?, ?, ?)",
+                     (str(red), magnitud, int(time.time() * 1000), lecturas))
 
 
 def guardar(conn: sqlite3.Connection, red: str, filas: list[tuple]) -> int:
@@ -131,3 +244,75 @@ def serie(conn: sqlite3.Connection, red: str, magnitud: str,
         cifras[unidad] = {"min": minimo, "max": maximo, "media": round(media, 1),
                           "ultima": ultima, "ultima_momento": ultima_momento}
     return {u: {"puntos": puntos.get(u, []), **c} for u, c in cifras.items()}
+
+
+def tiene_presencia(state: dict) -> bool:
+    """Si alguna unidad de la red tiene control de presencia."""
+    for u in state.get("units") or []:
+        for grupo in u.get("controls") or []:
+            for c in grupo if isinstance(grupo, list) else [grupo]:
+                if isinstance(c, dict) and c.get("type") == "Presence":
+                    return True
+    return False
+
+
+def sumar_ocupacion(puntos: list, horas: dict | None = None) -> dict:
+    """{(unidad, hora): [ocupado, observado]} a partir de los tramos de presencia.
+
+    Un tramo que cruza el cambio de hora se reparte entre las dos. Con `horas`
+    se acumula sobre lo ya sumado: la importación va por trozos y así no hace
+    falta tener en memoria los 600.000 tramos de 60 días de LANCO.
+    """
+    horas = {} if horas is None else horas
+    for p in puntos:
+        inicio = momento_datapoint(p.get("time"))
+        try:
+            valor = float(p.get("value"))
+            unidad = int(p.get("unit"))
+        except (TypeError, ValueError):
+            continue
+        if inicio is None or valor == 0:
+            continue
+        fin = inicio + int(abs(valor) * 1000)
+        t = inicio
+        while t < fin:
+            hora = t // HORA * HORA
+            corte = min(fin, hora + HORA)
+            acumulado = horas.setdefault((unidad, hora), [0.0, 0.0])
+            segundos = (corte - t) / 1000
+            acumulado[1] += segundos
+            if valor > 0:
+                acumulado[0] += segundos
+            t = corte
+    return horas
+
+
+def guardar_ocupacion(conn: sqlite3.Connection, red: str, horas: dict,
+                      desde: int) -> int:
+    """
+    Escribe las horas desde `desde` (ms), sustituyendo lo que hubiera.
+
+    Se sustituye y no se suma porque cada importación vuelve a pedir el último
+    día: un tramo largo («nadie» toda la noche) solo se registra al acabar, así
+    que las últimas horas llegan incompletas y se completan en la siguiente.
+    """
+    filas = [(str(red), unidad, hora, round(o, 1), round(v, 1))
+             for (unidad, hora), (o, v) in horas.items() if hora >= desde]
+    with conn:
+        conn.executemany("INSERT OR REPLACE INTO ocupacion VALUES (?, ?, ?, ?, ?)",
+                         filas)
+    return len(filas)
+
+
+def ultima_hora_ocupacion(conn: sqlite3.Connection, red: str) -> int | None:
+    (hora,) = conn.execute("SELECT MAX(hora) FROM ocupacion WHERE red = ?",
+                           (str(red),)).fetchone()
+    return hora
+
+
+def ocupacion(conn: sqlite3.Connection, red: str, desde: int) -> list[tuple]:
+    """(unidad, hora, ocupado, observado) de la red desde `desde` (ms)."""
+    return conn.execute(
+        "SELECT unidad, hora, ocupado, observado FROM ocupacion"
+        " WHERE red = ? AND hora >= ? ORDER BY unidad, hora",
+        (str(red), desde)).fetchall()
